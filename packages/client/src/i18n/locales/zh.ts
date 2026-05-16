@@ -86,7 +86,7 @@ export default {
     channels: '频道',
     gateways: '网关',
     terminal: '终端',
-    groupChat: '群聊',
+    groupChat: '会议室',
     files: '文件',
     groupConversation: '对话',
     groupPlatform: '平台',
@@ -967,9 +967,9 @@ export default {
     connectionError: '终端连接错误',
   },
 
-  // 群聊
+  // 会议室
   groupChat: {
-    title: '群聊',
+    title: '会议室',
     createRoom: '创建房间',
     joinByCode: '通过邀请码加入',
     roomName: '房间名称',

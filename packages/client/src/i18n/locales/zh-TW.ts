@@ -86,7 +86,7 @@ export default {
     channels: '頻道',
     gateways: '閘道',
     terminal: '終端機',
-    groupChat: '群聊',
+    groupChat: '會議室',
     files: '檔案',
     groupConversation: '對話',
     groupPlatform: '平台',
@@ -965,9 +965,9 @@ export default {
     connectionError: '終端機連線錯誤',
   },
 
-  // 群聊
+  // 會議室
   groupChat: {
-    title: '群聊',
+    title: '會議室',
     createRoom: '建立房間',
     joinByCode: '透過邀請碼加入',
     roomName: '房間名稱',
