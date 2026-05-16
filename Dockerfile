@@ -7,7 +7,13 @@ WORKDIR /app
 
 COPY . .
 
-RUN npm install && npm run build:docker && npm prune --omit=dev && ls -la dist/server/index.js dist/client/index.html
+RUN npm install
+
+RUN npm run build:docker
+
+RUN npm prune --omit=dev
+
+RUN ls -la dist/server/index.js dist/client/index.html
 
 FROM nousresearch/hermes-agent:latest
 
