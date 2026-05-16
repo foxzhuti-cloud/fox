@@ -76,7 +76,7 @@ export default {
     jobs: '任務',
     kanban: '看板',
     models: '模型',
-    profiles: '使用者',
+    profiles: '員工',
     plugins: '插件',
     skills: '技能',
     memory: '記憶',
