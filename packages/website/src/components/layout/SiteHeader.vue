@@ -31,7 +31,7 @@ function goHome() {
     <div class="header-inner">
       <div class="header-left" @click="goHome">
         <img src="/logo.png" alt="Hermes" class="logo-icon" />
-        <span class="logo-text">Hermes Web UI</span>
+        <span class="logo-text">Hermes Web</span>
       </div>
 
       <nav class="header-nav">
@@ -39,7 +39,7 @@ function goHome() {
         <a class="nav-link" @click.prevent="navigateTo('docs.getting-started')">{{ t('nav.docs') }}</a>
         <a
           class="nav-link"
-          href="https://github.com/EKKOLearnAI/hermes-web-ui"
+          href="https://www.apim.cn"
           target="_blank"
           rel="noopener"
         >
