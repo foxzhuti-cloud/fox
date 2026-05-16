@@ -1,7 +1,7 @@
 // Website SCSS variables — pure constants (no CSS custom properties)
 // CSS custom properties are defined in global.scss (imported from client)
 
-$font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+$font-ui: 'HarmonyOS_Regular', 'PingFang SC', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Hiragino Sans GB', 'Microsoft YaHei', 'Arial', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', sans-serif;
 $font-code: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 
 $breakpoint-mobile: 768px;
