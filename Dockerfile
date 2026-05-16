@@ -1,5 +1,8 @@
 FROM node:23-slim AS builder
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-dev make g++ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY . .
