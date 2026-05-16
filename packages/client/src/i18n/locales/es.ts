@@ -69,7 +69,6 @@ export default {
   sidebar: {
     chat: 'Chat',
     search: 'Buscar',
-    apiRelay: 'API Relay',
     history: 'Historial',
     jobs: 'Tareas programadas',
     models: 'Modelos',
