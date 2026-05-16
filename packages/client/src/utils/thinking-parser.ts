@@ -14,8 +14,8 @@ const TAG_RE = /<(think|thinking|reasoning)>([\s\S]*?)<\/\1>/gi
 const PLACEHOLDER_PREFIX = '\u0000THKCODE'
 const PLACEHOLDER_SUFFIX = '\u0000'
 
-const FENCED_RE = /(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\2\3[ \t]*(?=\n|$)/g
-const INLINE_CODE_RE = /`[^`\n]*`/g
+const FENCED_RE = new RegExp('(^|\\n)( {0,3})(\x60{3,}|~{3,})[^\\n]*\\n[\\s\\S]*?\\n\\2\\3[ \\t]*(?=\\n|$)', 'g')
+const INLINE_CODE_RE = new RegExp('\x60[^\x60\\n]*\x60', 'g')
 
 function protectCodeBlocks(input: string): { masked: string; blocks: string[] } {
   const blocks: string[] = []

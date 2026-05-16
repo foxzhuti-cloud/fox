@@ -23,7 +23,7 @@ export function extractJSON(text: string): string {
   const trimmed = text.trim()
 
   // Extract from ```json ... ``` code block
-  const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+  const codeBlockMatch = trimmed.match(new RegExp('\x60\x60\x60(?:json)?\\s*([\\s\\S]*?)\\s*\x60\x60\x60'))
   if (codeBlockMatch) {
     return codeBlockMatch[1].trim()
   }

@@ -84,8 +84,8 @@ export function useSpeech() {
     text = text.replace(/<thinking[^>]*>[\s\S]*/gi, '')
 
     // 移除代码块
-    text = text.replace(/```[\s\S]*?```/g, '')
-    text = text.replace(/`[^`]+`/g, '')
+    text = text.replace(new RegExp('\x60\x60\x60[\\s\\S]*?\x60\x60\x60', 'g'), '')
+    text = text.replace(new RegExp('\x60[^\x60]+\x60', 'g'), '')
 
     // 移除 HTML 标签
     text = text.replace(/<[^>]+>/g, '')

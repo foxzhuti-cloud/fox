@@ -38,7 +38,7 @@
     "dev:client": "vite --host",
     "dev:server": "nodemon",
     "build": "vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
-    "prepare": "[ -d dist ] || npm run build",
+    "build:docker": "vite build && node scripts/build-server.mjs",
     "preview": "NODE_ENV=production vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
