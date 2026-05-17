@@ -1,15 +1,13 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { NModal } from "naive-ui";
 import { useAppStore } from "@/stores/hermes/app";
 import ModelSelector from "./ModelSelector.vue";
 import ProfileSelector from "./ProfileSelector.vue";
 import LanguageSwitch from "./LanguageSwitch.vue";
 import ThemeSwitch from "./ThemeSwitch.vue";
 import { useSessionSearch } from '@/composables/useSessionSearch'
-import { changelog } from "@/data/changelog";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -36,13 +34,6 @@ function handleNav(key: string) {
 function handleLogout() {
   localStorage.clear();
   router.replace({ name: 'login' });
-}
-
-// Changelog
-const showChangelog = ref(false);
-
-function openChangelog() {
-  showChangelog.value = true;
 }
 </script>
 
@@ -282,25 +273,10 @@ function openChangelog() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
           </a>
         </div>
-        <span class="version-text" @click="openChangelog">Hermes Web v0.1.2</span>
+        <span class="version-text">Hermes Web v0.1.2</span>
         <ThemeSwitch />
       </div>
     </div>
-
-    <!-- Changelog modal -->
-    <NModal v-model:show="showChangelog" preset="dialog" :title="t('sidebar.changelog')" style="width: 520px;">
-      <div class="changelog-list">
-        <div v-for="entry in changelog" :key="entry.version" class="changelog-version-block">
-          <div class="changelog-version-header">
-            <span class="changelog-version-tag">v{{ entry.version }}</span>
-            <span class="changelog-date">{{ entry.date }}</span>
-          </div>
-          <ul class="changelog-changes">
-            <li v-for="(change, idx) in entry.changes" :key="idx">{{ t(change) }}</li>
-          </ul>
-        </div>
-      </div>
-    </NModal>
   </aside>
 </template>
 
@@ -533,63 +509,6 @@ function openChangelog() {
 .version-text {
   flex: 1;
   white-space: nowrap;
-  cursor: pointer;
-  transition: color 0.2s;
-
-  &:hover {
-    color: $accent-primary;
-  }
-}
-
-.changelog-list {
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.changelog-version-block {
-  margin-bottom: 20px;
-
-  &:last-child {
-    margin-bottom: 0;
-  }
-}
-
-.changelog-version-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.changelog-version-tag {
-  font-weight: 600;
-  font-size: 14px;
-  color: $text-primary;
-  font-family: $font-code;
-}
-
-.changelog-changes {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-
-  li {
-    font-size: 13px;
-    color: $text-secondary;
-    padding: 4px 0 4px 16px;
-    position: relative;
-
-    &::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 12px;
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: $text-muted;
-    }
-  }
 }
 
 // ─── Collapsed sidebar (icon-rail mode) ─────────────────────────
