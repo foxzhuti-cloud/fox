@@ -9,9 +9,7 @@ import { copyToClipboard } from "@/utils/clipboard";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
 import { useChatStore } from "@/stores/hermes/chat";
-import { useProfilesStore } from "@/stores/hermes/profiles";
 import { useSettingsStore } from "@/stores/hermes/settings";
-import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
 import {
   copyTextToClipboard,
   handleCodeBlockCopyClick,
@@ -21,22 +19,13 @@ import { useGlobalSpeech } from "@/composables/useSpeech";
 import { useVoiceSettings } from "@/composables/useVoiceSettings";
 import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
 
-const TOOL_PAYLOAD_DISPLAY_LIMIT = 1000;
-const JSON_STRING_DISPLAY_LIMIT = 200;
-const JSON_MAX_DEPTH = 6;
-const JSON_MAX_NODES = 1000;
-const JSON_MAX_KEYS_PER_OBJECT = 50;
-const JSON_MAX_ITEMS_PER_ARRAY = 50;
-const JSON_TRUNCATED_KEY = "__truncated__";
+const TOOL_PAYLOAD_DISPLAY_LIMIT = 2000;
 
-const props = defineProps<{ message: Message; highlight?: boolean; headingIdPrefix?: string }>();
+const props = defineProps<{ message: Message; highlight?: boolean }>();
 const { t } = useI18n();
 const toast = useMessage();
 
 const isSystem = computed(() => props.message.role === "system");
-const isAgentError = computed(() => props.message.role === "assistant" && props.message.systemType === "error");
-
-const effectiveHeadingIdPrefix = computed(() => props.headingIdPrefix || `msg-${props.message.id}`);
 const isCommandMessage = computed(() => props.message.role === "command" || props.message.systemType === "command");
 const isCommandError = computed(() => props.message.role === "command" && props.message.systemType === "error");
 const isStatusCommand = computed(() => isCommandMessage.value && props.message.commandAction === "status");
@@ -52,72 +41,22 @@ const statusItems = computed(() => {
   ];
 });
 
-type DisplayContentFile = {
-  type: 'image' | 'file'
-  name: string
-  path?: string
-  url?: string
-}
-
-function getBlockText(block: any): string {
-  if (!block || typeof block !== 'object') return ''
-  if (block.type === 'text' || block.type === 'input_text') {
-    return typeof block.text === 'string' ? block.text : ''
-  }
-  return ''
-}
-
-function getImageUrlFromBlock(block: any): string | null {
-  if (!block || typeof block !== 'object') return null
-  if (block.type !== 'input_image' && block.type !== 'image_url') return null
-  const raw = block.image_url
-  if (typeof raw === 'string') return raw
-  if (raw && typeof raw === 'object' && typeof raw.url === 'string') return raw.url
-  return null
-}
-
-function imageNameFromDataUrl(url: string, index: number): string {
-  const match = url.match(/^data:image\/([^;,]+)/i)
-  const ext = match?.[1] === 'jpeg' ? 'jpg' : match?.[1] || 'png'
-  return `image-${index + 1}.${ext}`
-}
-
-function parseContentBlocks(content: string): Array<ContentBlock | Record<string, unknown>> | null {
-  const trimmed = content.trim()
-  if (!trimmed) return null
-
-  const parse = (value: string) => {
-    const parsed = JSON.parse(value)
-    return Array.isArray(parsed) && parsed.length > 0 && 'type' in parsed[0]
-      ? parsed as Array<ContentBlock | Record<string, unknown>>
-      : null
-  }
-
-  try {
-    return parse(trimmed)
-  } catch {
-    // Hermes Agent stored some multimodal user messages via Python str(list),
-    // e.g. [{'type': 'text'}, {'type': 'image_url', ...}]. Convert that
-    // legacy repr into JSON for display only.
-    if (!trimmed.startsWith("[{'") && !trimmed.startsWith('[{"')) return null
-    try {
-      return parse(
-        trimmed
-          .replace(/\bNone\b/g, 'null')
-          .replace(/\bTrue\b/g, 'true')
-          .replace(/\bFalse\b/g, 'false')
-          .replace(/'/g, '"'),
-      )
-    } catch {
-      return null
-    }
-  }
-}
-
 // Parse ContentBlock[] from JSON string
 const contentBlocks = computed(() => {
   const content = props.message.content || '';
-  return parseContentBlocks(content);
+  if (!content.trim()) return null;
+
+  try {
+    // Try to parse as ContentBlock[] array
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed) && parsed.length > 0 && 'type' in parsed[0]) {
+      return parsed as ContentBlock[];
+    }
+  } catch {
+    // Not valid JSON, treat as plain text
+  }
+
+  return null;
 });
 
 // Check if content is in ContentBlock[] format
@@ -131,40 +70,16 @@ const displayText = computed(() => {
 
   // Extract text from blocks
   return contentBlocks.value!
-    .map(block => getBlockText(block))
-    .filter(Boolean)
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
     .join('\n');
 });
 
 // Extract files from ContentBlock[]
-const contentFiles = computed<DisplayContentFile[] | null>(() => {
+const contentFiles = computed(() => {
   if (!isContentBlockArray.value) return null;
 
-  return contentBlocks.value!.flatMap<DisplayContentFile>((block, index) => {
-    if (block.type === 'image') {
-      return [{
-        type: 'image' as const,
-        name: String((block as any).name || `image-${index + 1}`),
-        path: String((block as any).path || ''),
-      }].filter(file => file.path)
-    }
-    if (block.type === 'file') {
-      return [{
-        type: 'file' as const,
-        name: String((block as any).name || `file-${index + 1}`),
-        path: String((block as any).path || ''),
-      }].filter(file => file.path)
-    }
-    const imageUrl = getImageUrlFromBlock(block)
-    if (imageUrl?.startsWith('data:image/')) {
-      return [{
-        type: 'image' as const,
-        name: imageNameFromDataUrl(imageUrl, index),
-        url: imageUrl,
-      }]
-    }
-    return []
-  });
+  return contentBlocks.value!.filter(block => block.type === 'image' || block.type === 'file');
 });
 
 // Generate download URL with auth token
@@ -174,21 +89,13 @@ function getDownloadUrl(path: string, name: string): string {
 	return token ? `${base}&token=${encodeURIComponent(token)}` : base;
 }
 
-function getContentFileUrl(file: DisplayContentFile): string {
-  if (file.url) return file.url
-  return file.path ? getDownloadUrl(file.path, file.name) : ''
-}
-
 const toolExpanded = ref(false);
 const previewUrl = ref<string | null>(null);
 
 const chatStore = useChatStore();
-const profilesStore = useProfilesStore();
 const settingsStore = useSettingsStore();
 const speech = useGlobalSpeech();
 const voiceSettings = useVoiceSettings();
-const assistantProfileName = computed(() => chatStore.activeSession?.profile || profilesStore.activeProfileName || "default");
-const assistantProfileAvatar = computed(() => profilesStore.profiles.find(profile => profile.name === assistantProfileName.value)?.avatar);
 
 // Copy entire bubble content
 const copyableContent = computed(() => {
@@ -367,96 +274,19 @@ type ToolPayload = {
   language?: string;
 };
 
-function truncateLongString(value: string, marker: string): string {
-  return value.length > JSON_STRING_DISPLAY_LIMIT
-    ? value.slice(0, JSON_STRING_DISPLAY_LIMIT) + "\n" + marker
-    : value;
-}
-
-function truncateJsonValue(value: unknown, marker: string): unknown {
-  let nodeCount = 0;
-  const seen = new WeakSet<object>();
-
-  function stringifyLength(candidate: unknown): number {
-    return JSON.stringify(candidate, null, 2).length;
-  }
-
-  function visit(current: unknown, depth: number): unknown {
-    nodeCount += 1;
-    if (nodeCount > JSON_MAX_NODES) {
-      return marker;
-    }
-
-    if (typeof current === "string") return truncateLongString(current, marker);
-    if (current === null || typeof current !== "object") return current;
-
-    if (seen.has(current)) return `[Circular ${marker}]`;
-    if (depth >= JSON_MAX_DEPTH) {
-      return Array.isArray(current) ? `[Array ${marker}]` : `[Object ${marker}]`;
-    }
-
-    seen.add(current);
-
-    if (Array.isArray(current)) {
-      const result: unknown[] = [];
-      const maxItems = Math.min(current.length, JSON_MAX_ITEMS_PER_ARRAY);
-      for (let i = 0; i < maxItems; i += 1) {
-        const remaining = current.length - i;
-        result.push(visit(current[i], depth + 1));
-        if (stringifyLength(result) > TOOL_PAYLOAD_DISPLAY_LIMIT) {
-          result.pop();
-          result.push(`${marker}: ${remaining} more items`);
-          seen.delete(current);
-          return result;
-        }
-      }
-      if (current.length > maxItems) {
-        result.push(`${marker}: ${current.length - maxItems} more items`);
-      }
-      seen.delete(current);
-      return result;
-    }
-
-    const entries = Object.entries(current as Record<string, unknown>);
-    const result: Record<string, unknown> = {};
-    const maxKeys = Math.min(entries.length, JSON_MAX_KEYS_PER_OBJECT);
-    for (let i = 0; i < maxKeys; i += 1) {
-      const [key, val] = entries[i];
-      const remaining = entries.length - i;
-      result[key] = visit(val, depth + 1);
-      if (stringifyLength(result) > TOOL_PAYLOAD_DISPLAY_LIMIT) {
-        delete result[key];
-        result[JSON_TRUNCATED_KEY] = `${marker}: ${remaining} more keys`;
-        seen.delete(current);
-        return result;
-      }
-    }
-    if (entries.length > maxKeys) {
-      result[JSON_TRUNCATED_KEY] = `${marker}: ${entries.length - maxKeys} more keys`;
-    }
-    seen.delete(current);
-    return result;
-  }
-
-  const truncated = visit(value, 0);
-  if (stringifyLength(truncated) <= TOOL_PAYLOAD_DISPLAY_LIMIT) return truncated;
-  return { [JSON_TRUNCATED_KEY]: marker };
-}
-
 function formatToolPayload(raw?: string): ToolPayload {
   if (!raw) {
     return { full: "", display: "" };
   }
 
   try {
-    const parsed = JSON.parse(raw);
-    const full = JSON.stringify(parsed, null, 2);
-    const display = full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
-      ? JSON.stringify(truncateJsonValue(parsed, t("chat.truncated")), null, 2)
-      : full;
+    const full = JSON.stringify(JSON.parse(raw), null, 2);
     return {
       full,
-      display,
+      display:
+        full.length > TOOL_PAYLOAD_DISPLAY_LIMIT
+          ? full.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated")
+          : full,
       language: "json",
     };
   } catch {
@@ -541,22 +371,22 @@ const canPlaySpeech = computed(() => {
   // 只有 assistant 消息可以播放
   if (props.message.role !== 'assistant') return false
   if (!copyableContent.value) return false
-  // OpenAI / Custom / Edge / MiMo 不依赖浏览器 Web Speech API
-  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo') return true
+  // OpenAI / Custom / Edge 不依赖浏览器 Web Speech API
+  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge') return true
   return speech.isSupported
 })
 
 const isPlayingThisMessage = computed(() => {
-  // OpenAI / Custom / Edge / MiMo 模式
-  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo') {
+  // OpenAI / Custom / Edge 模式
+  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge') {
     return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPlaying.value
   }
   return speech.currentMessageId.value === props.message.id && speech.isPlaying.value
 })
 
 const isPausedThisMessage = computed(() => {
-  // OpenAI / Custom / Edge / MiMo 模式
-  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge' || voiceSettings.provider.value === 'mimo') {
+  // OpenAI / Custom / Edge 模式
+  if (voiceSettings.provider.value === 'openai' || voiceSettings.provider.value === 'custom' || voiceSettings.provider.value === 'edge') {
     return speech.currentCustomMessageId.value === props.message.id && speech.isCustomPaused.value
   }
   return speech.currentMessageId.value === props.message.id && speech.isPaused.value
@@ -611,24 +441,6 @@ function handleSpeechToggle() {
     return
   }
 
-  // MiMo TTS 模式
-  if (voiceSettings.provider.value === 'mimo') {
-    const apiKey = voiceSettings.mimoApiKey.value
-    if (!apiKey) {
-      console.warn('[MessageItem] MiMo TTS API Key 为空')
-      return
-    }
-    speech.mimoToggle(props.message.id, content, {
-      baseUrl: voiceSettings.mimoBaseUrl.value,
-      apiKey,
-      model: voiceSettings.mimoModel.value,
-      voice: voiceSettings.mimoVoice.value,
-      voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
-      stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
-    })
-    return
-  }
-
   // Web Speech API 模式
   if (voiceSettings.provider.value === 'webspeech') {
     const text = speech.extractReadableText(content)
@@ -674,18 +486,6 @@ onMounted(() => {
           rate: speedToEdgeRate(voiceSettings.edgeRate.value),
           pitch: hzToEdgePitch(voiceSettings.edgePitchHz.value),
         })
-      } else if (voiceSettings.provider.value === 'mimo') {
-        const apiKey = voiceSettings.mimoApiKey.value
-        if (apiKey) {
-          speech.mimoPlay(props.message.id, content, {
-            baseUrl: voiceSettings.mimoBaseUrl.value,
-            apiKey,
-            model: voiceSettings.mimoModel.value,
-            voice: voiceSettings.mimoVoice.value,
-            voiceDesignDesc: voiceSettings.mimoVoiceDesignDesc.value || undefined,
-            stylePrompt: voiceSettings.mimoStylePrompt.value || undefined,
-          })
-        }
       } else if (voiceSettings.provider.value === 'webspeech') {
         const text = speech.extractReadableText(content)
         if (text) {
@@ -779,19 +579,17 @@ onBeforeUnmount(() => {
     </template>
     <template v-else>
       <div class="msg-body">
-        <ProfileAvatar
+        <img
           v-if="message.role === 'assistant'"
+          src="/logo.png"
+          alt="Hermes"
           class="msg-avatar"
-          :name="assistantProfileName"
-          :avatar="assistantProfileAvatar"
-          :size="40"
         />
         <div class="msg-content" :class="message.role">
           <div
             class="message-bubble"
             :class="{
               system: isSystem,
-              'agent-error': isAgentError,
               command: isCommandMessage,
               'command-error': isCommandError,
               'speech-playing': isPlayingThisMessage && !isPausedThisMessage,
@@ -878,7 +676,6 @@ onBeforeUnmount(() => {
             <MarkdownRenderer
               v-if="parsedThinking.body && message.role === 'assistant'"
               :content="parsedThinking.body"
-              :heading-id-prefix="effectiveHeadingIdPrefix"
             />
 
             <!-- Render user message content -->
@@ -894,16 +691,16 @@ onBeforeUnmount(() => {
                   >
                     <template v-if="file.type === 'image'">
                       <img
-                        :src="getContentFileUrl(file)"
+                        :src="getDownloadUrl(file.path, file.name)"
                         :alt="file.name"
                         class="msg-attachment-thumb"
-                        @click="previewUrl = getContentFileUrl(file)"
+                        @click="previewUrl = getDownloadUrl(file.path, file.name)"
                       />
                     </template>
                     <template v-else>
                       <div
                         class="msg-attachment-file"
-                        @click="file.path && downloadFile(file.path, file.name).catch(err => toast.error(err.message || t('download.downloadFailed')))"
+                        @click="downloadFile(file.path, file.name).catch(err => toast.error(err.message || t('download.downloadFailed')))"
                         style="cursor: pointer;"
                         :title="t('download.downloadFile')"
                       >
@@ -926,7 +723,6 @@ onBeforeUnmount(() => {
             <MarkdownRenderer
               v-if="message.role === 'assistant' && message.content && !parsedThinking.body"
               :content="message.content"
-              :heading-id-prefix="effectiveHeadingIdPrefix"
             />
 
             <!-- Render system message content -->
@@ -1045,12 +841,6 @@ onBeforeUnmount(() => {
       background-color: $msg-assistant-bg;
       border-radius: 10px;
     }
-
-    .message-bubble.agent-error {
-      color: $error;
-      background-color: rgba(var(--error-rgb), 0.06);
-      border: 1px solid rgba(var(--error-rgb), 0.2);
-    }
   }
 
   &.tool {
@@ -1126,20 +916,6 @@ onBeforeUnmount(() => {
   &.command-error {
     border-color: rgba(var(--warning-rgb), 0.28);
     background-color: rgba(var(--warning-rgb), 0.06);
-  }
-
-  &.agent-error {
-    color: $error;
-    background-color: rgba(var(--error-rgb), 0.06);
-    border: 1px solid rgba(var(--error-rgb), 0.2);
-
-    :deep(.markdown-body),
-    :deep(.markdown-body p),
-    :deep(.markdown-body li),
-    :deep(.markdown-body strong),
-    :deep(.markdown-body code) {
-      color: $error;
-    }
   }
 
   &.speech-playing {

@@ -21,7 +21,40 @@ jobs:
 
       - name: Log in to Docker Hub
         run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+          USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
+          TOKEN="${{ secrets.DOCKERHUB_TOKEN }}"
+
+          if [ -z "$USERNAME" ]; then
+            echo ""
+            echo "=============================================="
+            echo "  DOCKERHUB_USERNAME secret is EMPTY."
+            echo "  Go here to set it:"
+            echo "  https://github.com/${{ github.repository }}/settings/secrets/actions"
+            echo "  Click 'New repository secret'"
+            echo "  Name:  DOCKERHUB_USERNAME"
+            echo "  Value: foxzhuti"
+            echo "=============================================="
+            echo ""
+            exit 1
+          fi
+
+          if [ -z "$TOKEN" ]; then
+            echo ""
+            echo "=============================================="
+            echo "  DOCKERHUB_TOKEN secret is EMPTY."
+            echo "  Go to https://hub.docker.com/settings/security"
+            echo "  Create a new Access Token (Read & Write)."
+            echo "  Then go here to set it:"
+            echo "  https://github.com/${{ github.repository }}/settings/secrets/actions"
+            echo "  Name:  DOCKERHUB_TOKEN"
+            echo "  Value: <paste the token>"
+            echo "=============================================="
+            echo ""
+            exit 1
+          fi
+
+          echo "Logging in as: $USERNAME"
+          printf '%s' "$TOKEN" | docker login -u "$USERNAME" --password-stdin
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5

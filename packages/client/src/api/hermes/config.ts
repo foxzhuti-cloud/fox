@@ -28,14 +28,6 @@ export interface MemoryConfig {
   user_char_limit?: number
 }
 
-export interface CompressionConfig {
-  enabled?: boolean
-  threshold?: number
-  target_ratio?: number
-  protect_last_n?: number
-  protect_first_n?: number
-}
-
 export interface SessionResetConfig {
   mode?: string
   idle_minutes?: number
@@ -55,7 +47,6 @@ export interface AppConfig {
   display?: DisplayConfig
   agent?: AgentConfig
   memory?: MemoryConfig
-  compression?: CompressionConfig
   session_reset?: SessionResetConfig
   privacy?: PrivacyConfig
   approvals?: ApprovalConfig
@@ -68,7 +59,6 @@ export interface AppConfig {
   wecom?: Record<string, any>
   feishu?: Record<string, any>
   dingtalk?: Record<string, any>
-  qqbot?: Record<string, any>
   platforms?: Record<string, any>
   [key: string]: any
 }
@@ -81,11 +71,10 @@ export async function fetchConfig(sections?: string[]): Promise<AppConfig> {
 export async function updateConfigSection(
   section: string,
   values: Record<string, any>,
-  options?: { restart?: boolean },
 ): Promise<void> {
   await request('/api/hermes/config', {
     method: 'PUT',
-    body: JSON.stringify({ section, values, ...options }),
+    body: JSON.stringify({ section, values }),
   })
 }
 

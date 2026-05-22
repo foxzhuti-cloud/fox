@@ -1,8 +1,5 @@
 FROM node:23-slim AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-dev make g++ && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 COPY . .
@@ -36,7 +33,6 @@ COPY --from=builder /app/package.json /app/package.json
 ENV NODE_ENV=production
 ENV HOME=/home/agent
 ENV HERMES_HOME=/home/agent/.hermes
-ENV HERMES_WEB_UI_MANAGED_GATEWAY=1
 ENV PATH=/opt/hermes/.venv/bin:$PATH
 
 EXPOSE 6060

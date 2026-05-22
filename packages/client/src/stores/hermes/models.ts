@@ -4,13 +4,11 @@ import * as systemApi from '@/api/hermes/system'
 import type { AvailableModelGroup, CustomProvider } from '@/api/hermes/system'
 import { hasApiKey } from '@/api/client'
 import { useAppStore } from './app'
-import { useProfilesStore } from './profiles'
 
 export const useModelsStore = defineStore('models', () => {
   const providers = ref<AvailableModelGroup[]>([])
   const allProviders = ref<AvailableModelGroup[]>([])
   const defaultModel = ref('')
-  const defaultProvider = ref('')
   const loading = ref(false)
 
   const customProviders = computed(() =>
@@ -28,7 +26,7 @@ export const useModelsStore = defineStore('models', () => {
         provider: g.provider,
         label: g.label,
         base_url: g.base_url,
-        isDefault: m === defaultModel.value && g.provider === defaultProvider.value,
+        isDefault: m === defaultModel.value,
       })),
     ),
   )
@@ -37,12 +35,12 @@ export const useModelsStore = defineStore('models', () => {
     if (!hasApiKey()) return
     loading.value = true
     try {
-      const profile = useProfilesStore().activeProfileName || 'default'
-      const res = await systemApi.fetchAvailableModelsForProfile(profile)
+      const res = await systemApi.fetchAvailableModels()
       providers.value = res.groups
       allProviders.value = res.allProviders
       defaultModel.value = res.default
-      defaultProvider.value = res.default_provider || ''
+      const appStore = useAppStore()
+      appStore.applyAvailableModelsResponse(res)
     } catch (err) {
       console.error('Failed to fetch providers:', err)
     } finally {
@@ -53,28 +51,28 @@ export const useModelsStore = defineStore('models', () => {
   async function setDefaultModel(modelId: string, provider: string) {
     await systemApi.updateDefaultModel({ default: modelId, provider })
     defaultModel.value = modelId
-    defaultProvider.value = provider
     const appStore = useAppStore()
-    appStore.reloadModels()
+    appStore.loadModels()
   }
 
   async function addProvider(data: CustomProvider) {
     await systemApi.addCustomProvider(data)
     await fetchProviders()
-    await useAppStore().reloadModels()
+    const appStore = useAppStore()
+    appStore.loadModels()
   }
 
   async function removeProvider(name: string) {
     await systemApi.removeCustomProvider(name)
     await fetchProviders()
-    await useAppStore().reloadModels()
+    const appStore = useAppStore()
+    appStore.loadModels()
   }
 
   return {
     providers,
     allProviders,
     defaultModel,
-    defaultProvider,
     loading,
     customProviders,
     builtinProviders,

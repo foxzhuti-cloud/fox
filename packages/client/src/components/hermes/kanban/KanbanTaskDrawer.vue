@@ -6,7 +6,6 @@ import { useRouter } from 'vue-router'
 import { request } from '@/api/client'
 import { getTask } from '@/api/hermes/kanban'
 import { useKanbanStore } from '@/stores/hermes/kanban'
-import { withDefaultAssignee } from '@/utils/hermes/kanban-assignees'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import type { Session, Message } from '@/stores/hermes/chat'
 import type { KanbanTaskDetail } from '@/api/hermes/kanban'
@@ -107,8 +106,10 @@ const historySession = computed<Session | null>(() => {
 })
 
 const assigneeOptions = computed(() => {
-  return withDefaultAssignee(kanbanStore.assignees, kanbanStore.stats?.by_assignee || {})
-    .map(a => ({ label: a.name, value: a.name }))
+  return kanbanStore.assignees.map(a => {
+    const total = Object.values(a.counts || {}).reduce((s, c) => s + c, 0)
+    return { label: `${a.name} · ${t('kanban.stats.tasks')}: ${total}`, value: a.name }
+  })
 })
 
 watch(() => [props.taskId, kanbanStore.selectedBoard] as const, async ([id, board]) => {
@@ -481,29 +482,9 @@ async function handleAssign() {
   border-radius: 4px;
   font-weight: 500;
 
-  &.triage {
-    background: rgba(148, 163, 184, 0.14);
-    color: #94a3b8;
-  }
-
-  &.todo {
-    background: rgba(56, 189, 248, 0.14);
-    color: #38bdf8;
-  }
-
-  &.ready {
-    background: rgba(var(--warning-rgb), 0.12);
-    color: $warning;
-  }
-
   &.running {
     background: rgba(var(--accent-primary-rgb), 0.12);
     color: $accent-primary;
-  }
-
-  &.blocked {
-    background: rgba(var(--error-rgb), 0.12);
-    color: $error;
   }
 
   &.done {
@@ -511,9 +492,19 @@ async function handleAssign() {
     color: $success;
   }
 
-  &.archived {
-    background: rgba(100, 116, 139, 0.14);
-    color: #94a3b8;
+  &.blocked {
+    background: rgba(var(--error-rgb), 0.12);
+    color: $error;
+  }
+
+  &.ready {
+    background: rgba(var(--warning-rgb), 0.12);
+    color: $warning;
+  }
+
+  &.triage, &.archived {
+    background: rgba(128, 128, 128, 0.12);
+    color: $text-muted;
   }
 }
 

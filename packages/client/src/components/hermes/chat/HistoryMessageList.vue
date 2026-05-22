@@ -3,7 +3,6 @@ import { ref, computed, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import MessageItem from "./MessageItem.vue";
 import { useChatStore } from "@/stores/hermes/chat";
-import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 import type { Session } from "@/stores/hermes/chat";
 
 const props = defineProps<{
@@ -11,7 +10,6 @@ const props = defineProps<{
 }>();
 
 const chatStore = useChatStore();
-const { toolTraceVisible } = useToolTraceVisibility();
 const { t } = useI18n();
 const listRef = ref<HTMLElement>();
 
@@ -20,10 +18,10 @@ const activeSession = computed(() => props.session || chatStore.activeSession);
 
 const displayMessages = computed(() =>
   (activeSession.value?.messages || []).filter((m) => {
-    // Tool messages without a name are internal use only and remain hidden.
-    if (m.role === 'tool') return toolTraceVisible.value && !!m.toolName
-    // Filter out messages with empty content.
-    if (!m.content?.trim()) return false
+    // Filter out tool messages without name (internal use only)
+    if (m.role === 'tool' && !m.toolName) return false
+    // Filter out messages with empty content (except tool messages)
+    if (m.role !== 'tool' && !m.content?.trim()) return false
     return true
   }),
 );

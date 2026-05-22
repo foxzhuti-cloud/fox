@@ -6,12 +6,10 @@ import { useChatStore } from "@/stores/hermes/chat";
 import thinkingVideoLight from "@/assets/thinking-light.mp4";
 import thinkingVideoDark from "@/assets/thinking-dark.mp4";
 import { useTheme } from "@/composables/useTheme";
-import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
 
 const chatStore = useChatStore();
 const { t } = useI18n();
 const { isDark } = useTheme();
-const { toolTraceVisible } = useToolTraceVisibility();
 const listRef = ref<HTMLElement>();
 
 function formatTokens(n: number): string {
@@ -43,16 +41,9 @@ const currentToolCalls = computed(() => {
   return [...tools].reverse();
 });
 
-const visibleToolCalls = computed(() =>
-  currentToolCalls.value.filter((tool) => !!tool.toolName),
-);
-
-const displayMessages = computed(() => {
-  const currentToolIds = new Set(currentToolCalls.value.map((tool) => tool.id));
-  return chatStore.messages.filter((m) => {
-    if (m.role === "tool") {
-      return toolTraceVisible.value && !!m.toolName && !(chatStore.isRunActive && currentToolIds.has(m.id));
-    }
+const displayMessages = computed(() =>
+  chatStore.messages.filter((m) => {
+    if (m.role === "tool") return false;
     if (
       m.role === "assistant" &&
       m.isStreaming &&
@@ -63,8 +54,8 @@ const displayMessages = computed(() => {
       return false;
     }
     return true;
-  });
-});
+  }),
+);
 
 const queuedMessages = computed(() => {
   const sid = chatStore.activeSessionId;
@@ -180,7 +171,7 @@ watch(currentToolCalls, () => {
           playsinline
           class="thinking-video"
         />
-        <div v-if="visibleToolCalls.length > 0 || chatStore.compressionState || chatStore.abortState" class="tool-calls-panel">
+        <div v-if="currentToolCalls.length > 0 || chatStore.compressionState || chatStore.abortState" class="tool-calls-panel">
           <!-- Abort indicator -->
           <div v-if="chatStore.abortState" class="tool-call-item compression-item">
             <svg
@@ -263,7 +254,7 @@ watch(currentToolCalls, () => {
           </div>
           <!-- Tool calls -->
           <div
-            v-for="tc in visibleToolCalls"
+            v-for="tc in currentToolCalls"
             :key="tc.id"
             class="tool-call-item"
           >

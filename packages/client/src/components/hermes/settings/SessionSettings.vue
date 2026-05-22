@@ -65,8 +65,7 @@ async function toggleRequireAuth(value: boolean) {
         :options="[
           { label: t('settings.session.modeBoth'), value: 'both' },
           { label: t('settings.session.modeIdle'), value: 'idle' },
-          { label: t('settings.session.modeDaily'), value: 'daily' },
-          { label: t('settings.session.modeNone'), value: 'none' },
+          { label: t('settings.session.modeHourly'), value: 'hourly' },
         ]"
         size="small"
         class="input-md"

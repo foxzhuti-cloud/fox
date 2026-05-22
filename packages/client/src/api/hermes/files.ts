@@ -3,7 +3,6 @@ import { request, getApiKey, getBaseUrlValue } from '../client'
 export interface FileEntry {
   name: string
   path: string
-  absolutePath?: string
   isDir: boolean
   size: number
   modTime: string
@@ -12,14 +11,13 @@ export interface FileEntry {
 export interface FileStat {
   name: string
   path: string
-  absolutePath?: string
   isDir: boolean
   size: number
   modTime: string
   permissions?: string
 }
 
-export async function listFiles(path: string = ''): Promise<{ entries: FileEntry[]; path: string; absolutePath?: string }> {
+export async function listFiles(path: string = ''): Promise<{ entries: FileEntry[]; path: string }> {
   const params = new URLSearchParams()
   if (path) params.set('path', path)
   const query = params.toString()

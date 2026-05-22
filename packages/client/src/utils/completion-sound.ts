@@ -1,20 +1,32 @@
-let audioCtx: AudioContext | null = null
+type AudioContextConstructor = typeof AudioContext
+
+type WindowWithWebkitAudio = Window & typeof globalThis & {
+  webkitAudioContext?: AudioContextConstructor
+}
+
+let audioContext: AudioContext | null = null
 
 function getAudioContext(): AudioContext | null {
-  if (audioCtx) return audioCtx
-  try {
-    audioCtx = new AudioContext()
-    return audioCtx
-  } catch {
-    return null
+  if (typeof window === 'undefined') return null
+
+  const AudioContextCtor = window.AudioContext || (window as WindowWithWebkitAudio).webkitAudioContext
+  if (!AudioContextCtor) return null
+
+  if (!audioContext) {
+    audioContext = new AudioContextCtor()
   }
+
+  return audioContext
 }
 
 export function primeCompletionSound(): void {
   const ctx = getAudioContext()
-  if (ctx && ctx.state === 'suspended') {
-    void ctx.resume()
-  }
+  if (!ctx || ctx.state !== 'suspended') return
+
+  void ctx.resume().catch(() => {
+    // Browser autoplay policy may still reject until a user gesture. Ignore; the
+    // next send action will try again.
+  })
 }
 
 export async function playCompletionSound(): Promise<boolean> {
@@ -27,35 +39,30 @@ export async function playCompletionSound(): Promise<boolean> {
     }
 
     const now = ctx.currentTime
+    const duration = 0.16
+    const oscillator = ctx.createOscillator()
+    const gain = ctx.createGain()
 
-    const osc1 = ctx.createOscillator()
-    const gain1 = ctx.createGain()
-    osc1.type = 'sine'
-    osc1.frequency.setValueAtTime(523, now)
-    gain1.gain.setValueAtTime(0.15, now)
-    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.12)
-    osc1.connect(gain1)
-    gain1.connect(ctx.destination)
-    osc1.start(now)
-    osc1.stop(now + 0.1)
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(880, now)
+    oscillator.frequency.exponentialRampToValueAtTime(660, now + duration)
 
-    const osc2 = ctx.createOscillator()
-    const gain2 = ctx.createGain()
-    osc2.type = 'sine'
-    osc2.frequency.setValueAtTime(660, now + 0.08)
-    gain2.gain.setValueAtTime(0.15, now + 0.08)
-    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.22)
-    osc2.connect(gain2)
-    gain2.connect(ctx.destination)
-    osc2.start(now + 0.08)
-    osc2.stop(now + 0.2)
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.015)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
+
+    oscillator.connect(gain)
+    gain.connect(ctx.destination)
+    oscillator.start(now)
+    oscillator.stop(now + duration)
 
     return true
-  } catch {
+  } catch (err) {
+    console.warn('Failed to play completion sound:', err)
     return false
   }
 }
 
 export function __resetCompletionSoundForTests(): void {
-  audioCtx = null
+  audioContext = null
 }

@@ -3,15 +3,12 @@ import { ref } from 'vue'
 import {
   checkHealth,
   fetchAvailableModels,
-  addCustomModel as persistCustomModel,
-  removeCustomModel as deletePersistedCustomModel,
   updateDefaultModel,
   updateModelVisibility,
   triggerUpdate,
   updateModelAlias,
   type AvailableModelGroup,
   type AvailableModelsResponse,
-  type ProfileAvailableModels,
   type ModelVisibility,
   type ModelVisibilityRule,
 } from '@/api/hermes/system'
@@ -20,7 +17,6 @@ import { hasApiKey } from '@/api/client'
 const WEB_UI_VERSION = __APP_VERSION__
 
 const SIDEBAR_COLLAPSED_KEY = 'hermes_sidebar_collapsed'
-const MODELS_CACHE_TTL_MS = 30000
 
 export const useAppStore = defineStore('app', () => {
   const sidebarOpen = ref(false)
@@ -34,7 +30,6 @@ export const useAppStore = defineStore('app', () => {
   const clientOutdated = ref(false)
   const updating = ref(false)
   const modelGroups = ref<AvailableModelGroup[]>([])
-  const profileModelGroups = ref<ProfileAvailableModels[]>([])
   const selectedModel = ref('')
   const selectedProvider = ref('')
   const customModels = ref<Record<string, string[]>>({})
@@ -47,8 +42,6 @@ export const useAppStore = defineStore('app', () => {
   const streamEnabled = ref(true)
   const sessionPersistence = ref(true)
   const maxTokens = ref(4096)
-  let modelsLoadPromise: Promise<void> | null = null
-  let modelsLastRequestedAt = 0
 
   async function doUpdate(): Promise<boolean> {
     updating.value = true
@@ -84,10 +77,8 @@ export const useAppStore = defineStore('app', () => {
 
   function applyAvailableModelsResponse(res: AvailableModelsResponse) {
     modelGroups.value = res.groups
-    profileModelGroups.value = res.profiles || []
     modelAliases.value = res.model_aliases || {}
     modelVisibility.value = res.model_visibility || {}
-    customModels.value = res.custom_models || {}
 
     const defaultModel = res.default || ''
     const defaultProvider = res.default_provider || ''
@@ -121,52 +112,30 @@ export const useAppStore = defineStore('app', () => {
       const selectedGroup = explicitGroup || inferredGroup!
       selectedModel.value = defaultModel
       selectedProvider.value = selectedGroup.provider
+      customModels.value = {}
     } else if (unlistedDefault) {
       selectedModel.value = defaultModel
       selectedProvider.value = defaultProvider
-      customModels.value = {
-        ...customModels.value,
-        [defaultProvider]: Array.from(new Set([...(customModels.value[defaultProvider] || []), defaultModel])),
-      }
+      customModels.value = { [defaultProvider]: [defaultModel] }
     } else if (fallbackGroup) {
       selectedModel.value = fallbackGroup.models[0]
       selectedProvider.value = fallbackGroup.provider
+      customModels.value = {}
     } else {
       selectedModel.value = ''
       selectedProvider.value = ''
+      customModels.value = {}
     }
   }
 
-  async function loadModels(force = false) {
+  async function loadModels() {
     if (!hasApiKey()) return
-    if (!force && modelsLoadPromise) return modelsLoadPromise
-    if (!force && modelsLastRequestedAt > 0 && Date.now() - modelsLastRequestedAt < MODELS_CACHE_TTL_MS) return
-    modelsLastRequestedAt = Date.now()
-    modelsLoadPromise = (async () => {
-      try {
-        const res = await fetchAvailableModels()
-        applyAvailableModelsResponse(res)
-      } catch {
-        // ignore
-      } finally {
-        modelsLoadPromise = null
-      }
-    })()
-    return modelsLoadPromise
-  }
-
-  async function waitForModelsForRun(timeoutMs = 15000) {
-    if (!hasApiKey()) return
-    const pending = modelsLoadPromise || (modelsLastRequestedAt === 0 ? loadModels() : null)
-    if (!pending) return
-    await Promise.race([
-      pending,
-      new Promise<void>(resolve => setTimeout(resolve, timeoutMs)),
-    ])
-  }
-
-  async function reloadModels() {
-    return loadModels(true)
+    try {
+      const res = await fetchAvailableModels()
+      applyAvailableModelsResponse(res)
+    } catch {
+      // ignore
+    }
   }
 
   function getModelAlias(modelId: string, provider?: string): string {
@@ -179,25 +148,6 @@ export const useAppStore = defineStore('app', () => {
 
   function displayModelName(modelId: string, provider?: string): string {
     return getModelAlias(modelId, provider) || modelId
-  }
-
-  function removeModelFromGroupList(groups: AvailableModelGroup[], provider: string, modelId: string): AvailableModelGroup[] {
-    return groups.map(group => {
-      if (group.provider !== provider) return group
-      return {
-        ...group,
-        models: group.models.filter(model => model !== modelId),
-        available_models: group.available_models?.filter(model => model !== modelId),
-      }
-    })
-  }
-
-  function removeModelFromLoadedGroups(provider: string, modelId: string) {
-    modelGroups.value = removeModelFromGroupList(modelGroups.value, provider, modelId)
-    profileModelGroups.value = profileModelGroups.value.map(profileEntry => ({
-      ...profileEntry,
-      groups: removeModelFromGroupList(profileEntry.groups, provider, modelId),
-    }))
   }
 
   async function setModelAlias(modelId: string, provider: string, alias: string) {
@@ -226,8 +176,10 @@ export const useAppStore = defineStore('app', () => {
       selectedProvider.value = provider || ''
       // Track as custom if not already in the server-fetched list
       if (provider && !modelGroups.value.find(g => g.provider === provider)?.models.includes(modelId)) {
-        const res = await persistCustomModel({ provider, model: modelId })
-        customModels.value = res.custom_models || {}
+        if (!customModels.value[provider]) customModels.value[provider] = []
+        if (!customModels.value[provider].includes(modelId)) {
+          customModels.value[provider] = [...customModels.value[provider], modelId]
+        }
       }
     } catch (err: any) {
       console.error('Failed to switch model:', err)
@@ -242,14 +194,7 @@ export const useAppStore = defineStore('app', () => {
     const remaining = providerModels.filter(m => m !== modelId)
     if (remaining.length > 0) nextCustomModels[provider] = remaining
     else delete nextCustomModels[provider]
-    try {
-      const res = await deletePersistedCustomModel({ provider, model: modelId })
-      customModels.value = res.custom_models || nextCustomModels
-    } catch (err) {
-      console.error('Failed to remove custom model:', err)
-      customModels.value = nextCustomModels
-    }
-    removeModelFromLoadedGroups(provider, modelId)
+    customModels.value = nextCustomModels
 
     if (selectedModel.value === modelId && selectedProvider.value === provider) {
       const providerGroup = modelGroups.value.find(g => g.provider === provider && g.models.length > 0)
@@ -275,7 +220,7 @@ export const useAppStore = defineStore('app', () => {
   async function setModelVisibility(provider: string, rule: ModelVisibilityRule) {
     const res = await updateModelVisibility({ provider, mode: rule.mode, models: rule.models })
     modelVisibility.value = res.model_visibility || {}
-    await reloadModels()
+    await loadModels()
   }
 
   function startHealthPolling(interval = 30000) {
@@ -330,7 +275,6 @@ export const useAppStore = defineStore('app', () => {
     doUpdate,
     reloadClient,
     modelGroups,
-    profileModelGroups,
     customModels,
     modelAliases,
     modelVisibility,
@@ -341,8 +285,6 @@ export const useAppStore = defineStore('app', () => {
     maxTokens,
     checkConnection,
     loadModels,
-    waitForModelsForRun,
-    reloadModels,
     applyAvailableModelsResponse,
     switchModel,
     removeCustomModel,

@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { fetchConversationDetail, fetchConversationSummaries, type ConversationDetail, type ConversationSummary } from '@/api/hermes/conversations'
 import { formatTimestampSeconds, getSourceLabel } from '@/shared/session-display'
-import { useAppStore } from '@/stores/hermes/app'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{ humanOnly: boolean }>()
 const { t } = useI18n()
-const appStore = useAppStore()
 
 const POLL_INTERVAL_MS = 15000
 
@@ -22,11 +20,6 @@ let sessionsRequestId = 0
 let detailRequestId = 0
 
 const selectedSession = computed(() => sessions.value.find(session => session.id === selectedSessionId.value) || null)
-const selectedSessionModelName = computed(() =>
-  selectedSession.value?.model
-    ? appStore.displayModelName(selectedSession.value.model, selectedSession.value.provider)
-    : '',
-)
 
 function roleLabel(role: string): string {
   return role === 'user' ? t('chat.monitorRoleUser') : t('chat.monitorRoleAssistant')
@@ -160,7 +153,7 @@ onUnmounted(() => {
         <div class="conversation-monitor__detail-meta">
           <span>{{ getSourceLabel(selectedSession.source) }}</span>
           <span>·</span>
-          <span :title="selectedSession.model">{{ selectedSessionModelName }}</span>
+          <span>{{ selectedSession.model }}</span>
           <span>·</span>
           <span>{{ linkedSessionsLabel(selectedSession.thread_session_count) }}</span>
         </div>

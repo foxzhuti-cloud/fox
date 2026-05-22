@@ -8,12 +8,10 @@ import { setModelContext } from '@/api/hermes/model-context'
 import { NButton, NTooltip, NSwitch, NModal, NInputNumber, useMessage } from 'naive-ui'
 import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 
 const chatStore = useChatStore()
 const { t } = useI18n()
 const message = useMessage()
-const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 const inputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const commandDropdownRef = ref<HTMLDivElement>()
@@ -161,8 +159,9 @@ async function saveContextLimit() {
 
   isSavingContextLimit.value = true
   try {
-    const provider = chatStore.activeSession?.provider || useAppStore().selectedProvider || ''
-    const model = chatStore.activeSession?.model || useAppStore().selectedModel || ''
+    const appStore = useAppStore()
+    const provider = appStore.selectedProvider || ''
+    const model = appStore.selectedModel || ''
 
     if (!provider || !model) {
       message.error(t('chat.contextEditFailed'))
@@ -182,13 +181,8 @@ async function saveContextLimit() {
 
 async function loadContextLength() {
   try {
-    const activeSession = chatStore.activeSession
-    const profile = activeSession?.profile || useProfilesStore().activeProfileName || undefined
-    contextLength.value = await fetchContextLength(
-      profile,
-      activeSession?.provider || undefined,
-      activeSession?.model || undefined,
-    )
+    const profile = useProfilesStore().activeProfileName || undefined
+    contextLength.value = await fetchContextLength(profile)
   } catch {
     contextLength.value = FALLBACK_CONTEXT
   }
@@ -196,16 +190,9 @@ async function loadContextLength() {
 
 onMounted(loadContextLength)
 watch(() => useProfilesStore().activeProfileName, loadContextLength)
-watch(() => useAppStore().selectedProvider, loadContextLength)
 watch(() => useAppStore().selectedModel, loadContextLength)
-watch(() => chatStore.activeSession?.id, loadContextLength)
-watch(() => chatStore.activeSession?.profile, loadContextLength)
-watch(() => chatStore.activeSession?.provider, loadContextLength)
-watch(() => chatStore.activeSession?.model, loadContextLength)
 
 const totalTokens = computed(() => {
-  const context = chatStore.activeSession?.contextTokens
-  if (typeof context === 'number' && Number.isFinite(context) && context > 0) return context
   const input = chatStore.activeSession?.inputTokens ?? 0
   const output = chatStore.activeSession?.outputTokens ?? 0
   return input + output
@@ -443,24 +430,6 @@ function isImage(type: string): boolean {
         />
       </div>
 
-      <NTooltip trigger="hover">
-        <template #trigger>
-          <NButton
-            quaternary
-            size="tiny"
-            class="tool-trace-toggle"
-            :class="{ active: toolTraceVisible }"
-            :aria-label="toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls')"
-            @click="toggleToolTraceVisible"
-          >
-            <svg class="tool-trace-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14.7 6.3a4.5 4.5 0 0 0-5.8 5.8L3.5 17.5a2.1 2.1 0 0 0 3 3l5.4-5.4a4.5 4.5 0 0 0 5.8-5.8l-3 3-3-3 3-3z"/>
-            </svg>
-          </NButton>
-        </template>
-        {{ toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls') }}
-      </NTooltip>
-
       <span v-if="totalTokens > 0" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
         {{ formatTokens(totalTokens) }} /
         <NTooltip trigger="hover">
@@ -645,64 +614,19 @@ function isImage(type: string): boolean {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 0 0 8px;
+  padding: 0 8px;
   border-left: 1px solid $border-light;
   margin-left: 4px;
 
   .switch-label {
     display: flex;
     align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    color: #999999;
+    color: $text-muted;
     font-size: 12px;
 
     svg {
-      opacity: 1;
+      opacity: 0.7;
     }
-  }
-
-  :deep(.n-switch),
-  :deep(.n-switch__rail) {
-    margin-right: 0;
-  }
-}
-
-.tool-trace-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #999999;
-  width: 24px;
-  min-width: 24px;
-  height: 22px;
-  margin-left: -4px;
-  padding: 0;
-  background: transparent !important;
-  opacity: 1;
-
-  :deep(.n-button__state-border),
-  :deep(.n-button__border),
-  :deep(.n-button__ripple) {
-    display: none;
-  }
-
-  .tool-trace-icon {
-    display: block;
-    flex: 0 0 16px;
-    width: 16px;
-    height: 16px;
-  }
-
-  &.active {
-    color: #999999;
-    opacity: 1;
-  }
-
-  &:hover {
-    color: #999999;
-    opacity: 1;
   }
 }
 

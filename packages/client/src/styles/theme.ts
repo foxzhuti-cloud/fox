@@ -25,7 +25,7 @@ export const lightThemeOverrides: GlobalThemeOverrides = {
     fontSize: '14px',
     fontSizeMedium: '14px',
     heightMedium: '36px',
-    fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+    fontFamily: 'HarmonyOS_Regular, PingFang SC, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Hiragino Sans GB, Microsoft YaHei, Arial, "Apple Color Emoji", "Segoe UI Emoji", Segoe UI Symbol, "Noto Color Emoji", sans-serif',
     fontFamilyMono: 'JetBrains Mono, Fira Code, Consolas, monospace',
   },
   Layout: {
@@ -95,7 +95,7 @@ export const darkThemeOverrides: GlobalThemeOverrides = {
     fontSize: '14px',
     fontSizeMedium: '14px',
     heightMedium: '36px',
-    fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+    fontFamily: 'HarmonyOS_Regular, PingFang SC, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Hiragino Sans GB, Microsoft YaHei, Arial, "Apple Color Emoji", "Segoe UI Emoji", Segoe UI Symbol, "Noto Color Emoji", sans-serif',
     fontFamilyMono: 'JetBrains Mono, Fira Code, Consolas, monospace',
   },
   Layout: {
@@ -146,15 +146,6 @@ export const darkThemeOverrides: GlobalThemeOverrides = {
   },
 }
 
-export function getThemeOverrides(isDark: boolean, isComic?: boolean): GlobalThemeOverrides {
-  const base = isDark ? darkThemeOverrides : lightThemeOverrides
-  if (!isComic) return base
-  const comicFont = "'Comic Neue', 'ZCOOL KuaiLe', 'Zen Maru Gothic', 'Gaegu', cursive, sans-serif"
-  return {
-    ...base,
-    common: {
-      ...base.common!,
-      fontFamily: comicFont,
-    },
-  }
+export function getThemeOverrides(isDark: boolean, _isComic?: boolean): GlobalThemeOverrides {
+  return isDark ? darkThemeOverrides : lightThemeOverrides
 }

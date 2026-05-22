@@ -7,17 +7,13 @@ import KanbanTaskCard from '@/components/hermes/kanban/KanbanTaskCard.vue'
 import KanbanTaskDrawer from '@/components/hermes/kanban/KanbanTaskDrawer.vue'
 import KanbanCreateForm from '@/components/hermes/kanban/KanbanCreateForm.vue'
 import { DEFAULT_KANBAN_BOARD, useKanbanStore } from '@/stores/hermes/kanban'
-import { useProfilesStore } from '@/stores/hermes/profiles'
-import { withDefaultAssignee } from '@/utils/hermes/kanban-assignees'
 import type { KanbanTaskStatus } from '@/api/hermes/kanban'
-import type { ProfileAvatar } from '@/api/hermes/profiles'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 const kanbanStore = useKanbanStore()
-const profilesStore = useProfilesStore()
 
 const showCreateForm = ref(false)
 const showCreateBoardForm = ref(false)
@@ -29,7 +25,6 @@ const refreshTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const routeReady = ref(false)
 
 const boardStatuses: KanbanTaskStatus[] = ['triage', 'todo', 'ready', 'running', 'blocked', 'done', 'archived']
-const expandedStatusNames = ref<string[]>([...boardStatuses])
 
 function firstQueryString(value: unknown): string | null {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : null
@@ -87,17 +82,6 @@ const tasksByStatus = computed(() => {
   return grouped
 })
 
-const visibleBoardStatuses = computed(() => {
-  const status = kanbanStore.filterStatus as KanbanTaskStatus | null
-  return status && boardStatuses.includes(status) ? [status] : boardStatuses
-})
-
-const visibleAssignees = computed(() => withDefaultAssignee(kanbanStore.assignees, kanbanStore.stats?.by_assignee || {}))
-
-const profileAvatarByName = computed<Record<string, ProfileAvatar | null>>(() => {
-  return Object.fromEntries(profilesStore.profiles.map(profile => [profile.name, profile.avatar || null]))
-})
-
 const statusFilterOptions = computed(() => [
   { label: t('kanban.allStatuses'), value: '' },
   ...boardStatuses.map(s => ({ label: t(`kanban.columns.${s}`, s), value: s })),
@@ -105,7 +89,10 @@ const statusFilterOptions = computed(() => [
 
 const assigneeFilterOptions = computed(() => [
   { label: t('kanban.allAssignees'), value: '' },
-  ...visibleAssignees.value.map(a => ({ label: a.name, value: a.name })),
+  ...kanbanStore.assignees.map(a => {
+    const total = Object.values(a.counts || {}).reduce((s, c) => s + c, 0)
+    return { label: `${t('kanban.detail.assignee')}: ${a.name} · ${taskCountLabel(total)}`, value: a.name }
+  }),
 ])
 
 const filterStatusValue = computed({
@@ -123,16 +110,8 @@ watch(() => route.query.board, async () => {
   await applyBoardSelection(routeBoard(), false)
 })
 
-watch(visibleBoardStatuses, statuses => {
-  expandedStatusNames.value = [...statuses]
-}, { immediate: true })
-
 onMounted(async () => {
-  await Promise.all([
-    kanbanStore.fetchBoards(),
-    kanbanStore.fetchCapabilities(),
-    profilesStore.profiles.length === 0 ? profilesStore.fetchProfiles() : Promise.resolve(),
-  ])
+  await Promise.all([kanbanStore.fetchBoards(), kanbanStore.fetchCapabilities()])
   await applyBoardSelection(routeBoard(), true, true)
   kanbanStore.startEventStream()
   routeReady.value = true
@@ -161,12 +140,6 @@ async function handleDrawerUpdated() {
 }
 
 async function handleApplyFilter() {
-  await kanbanStore.fetchTasks()
-}
-
-async function handleStatusChipClick(status: KanbanTaskStatus | null) {
-  kanbanStore.setFilter('status', status)
-  expandedStatusNames.value = status ? [status] : [...boardStatuses]
   await kanbanStore.fetchTasks()
 }
 
@@ -263,53 +236,31 @@ async function handleArchiveSelectedBoard() {
 
     <!-- Stats bar -->
     <div v-if="kanbanStore.stats" class="stats-bar">
-      <button
-        v-for="status in boardStatuses"
-        :key="status"
-        type="button"
-        class="stat-chip"
-        :class="[status, { active: kanbanStore.filterStatus === status }]"
-        :aria-pressed="kanbanStore.filterStatus === status"
-        @click="handleStatusChipClick(status)"
-      >
+      <div v-for="status in boardStatuses" :key="status" class="stat-chip" :class="status">
         <span class="stat-count">{{ kanbanStore.stats.by_status[status] || 0 }}</span>
         <span class="stat-label">{{ t(`kanban.columns.${status}`, status) }}</span>
-      </button>
-      <button
-        type="button"
-        class="stat-chip total"
-        :class="{ active: !kanbanStore.filterStatus }"
-        :aria-pressed="!kanbanStore.filterStatus"
-        @click="handleStatusChipClick(null)"
-      >
+      </div>
+      <div class="stat-chip total">
         <span class="stat-count">{{ kanbanStore.stats.total }}</span>
         <span class="stat-label">{{ t('kanban.stats.total') }}</span>
-      </button>
+      </div>
     </div>
 
     <!-- Board -->
     <NSpin :show="kanbanStore.loading && kanbanStore.tasks.length === 0">
       <div class="kanban-board">
-        <NCollapse v-model:expanded-names="expandedStatusNames">
+        <NCollapse>
           <NCollapseItem
-            v-for="status in visibleBoardStatuses"
+            v-for="status in boardStatuses"
             :key="status"
             :title="`${t(`kanban.columns.${status}`, status)} (${tasksByStatus[status].length})`"
             :name="status"
-            :class="['kanban-column', `status-${status}`]"
           >
-            <template #header>
-              <span class="column-header" :class="`status-${status}`">
-                <span class="status-dot" aria-hidden="true" />
-                <span>{{ t(`kanban.columns.${status}`, status) }} ({{ tasksByStatus[status].length }})</span>
-              </span>
-            </template>
-            <div class="task-list" :class="`status-${status}`">
+            <div class="task-list">
               <KanbanTaskCard
                 v-for="task in tasksByStatus[status]"
                 :key="task.id"
                 :task="task"
-                :assignee-avatar="task.assignee ? profileAvatarByName[task.assignee] || null : null"
                 @click="handleTaskClick(task.id)"
               />
               <div v-if="tasksByStatus[status].length === 0" class="column-empty">
@@ -381,28 +332,6 @@ async function handleArchiveSelectedBoard() {
   flex-wrap: wrap;
 }
 
-.stat-chip,
-.column-header,
-.task-list {
-  --kanban-status-color: #64748b;
-
-  &.triage,
-  &.status-triage { --kanban-status-color: #94a3b8; }
-  &.todo,
-  &.status-todo { --kanban-status-color: #38bdf8; }
-  &.ready,
-  &.status-ready { --kanban-status-color: #f59e0b; }
-  &.running,
-  &.status-running { --kanban-status-color: #8b5cf6; }
-  &.blocked,
-  &.status-blocked { --kanban-status-color: #ef4444; }
-  &.done,
-  &.status-done { --kanban-status-color: #22c55e; }
-  &.archived,
-  &.status-archived { --kanban-status-color: #64748b; }
-  &.total { --kanban-status-color: #e2e8f0; }
-}
-
 .stat-chip {
   display: flex;
   align-items: center;
@@ -411,28 +340,13 @@ async function handleArchiveSelectedBoard() {
   border-radius: 16px;
   font-size: 12px;
   border: 1px solid $border-light;
-  border-left: 3px solid var(--kanban-status-color);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  line-height: inherit;
 
-  &:hover,
-  &.active {
-    border-color: var(--kanban-status-color);
-    background-color: rgba(var(--accent-primary-rgb), 0.08);
-  }
-
-  &.active .stat-label,
-  &.active .stat-count {
-    color: var(--kanban-status-color);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--kanban-status-color);
-    outline-offset: 2px;
-  }
+  &.triage, &.todo, &.ready { border-left: 3px solid $text-muted; }
+  &.running { border-left: 3px solid $accent-primary; }
+  &.blocked { border-left: 3px solid $error; }
+  &.done { border-left: 3px solid $success; }
+  &.archived { border-left: 3px solid $border-color; }
+  &.total { border-left: 3px solid $text-primary; }
 }
 
 .stat-count {
@@ -451,29 +365,10 @@ async function handleArchiveSelectedBoard() {
   overflow-y: auto;
 }
 
-.column-header {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--kanban-status-color);
-  font-weight: 600;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--kanban-status-color);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--kanban-status-color) 18%, transparent);
-  flex-shrink: 0;
-}
-
 .task-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border-left: 2px solid var(--kanban-status-color);
-  padding-left: 10px;
 }
 
 .column-empty {

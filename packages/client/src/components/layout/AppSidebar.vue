@@ -19,12 +19,6 @@ const logoPath = '/logo.png';
 
 const collapsedGroups = reactive<Record<string, boolean>>({});
 
-type SidebarGroupKey = "Conversation" | "Agent" | "Monitoring" | "System";
-
-function groupLabel(key: SidebarGroupKey) {
-  return t(`sidebar.group${key}${appStore.sidebarCollapsed ? "Short" : ""}`);
-}
-
 function toggleGroup(key: string) {
   collapsedGroups[key] = !collapsedGroups[key];
 }
@@ -41,6 +35,7 @@ function handleLogout() {
   localStorage.clear();
   router.replace({ name: 'login' });
 }
+
 </script>
 
 <template>
@@ -62,12 +57,12 @@ function handleLogout() {
       <!-- Conversation -->
       <div class="nav-group">
         <div class="nav-group-label" @click="toggleGroup('conversation')">
-          <span>{{ groupLabel("Conversation") }}</span>
+          <span>{{ t("sidebar.groupConversation") }}</span>
           <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('conversation') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('conversation')" class="nav-group-items">
+        <div v-show="!isGroupCollapsed('conversation')">
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.chat' }" @click="handleNav('hermes.chat')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -97,18 +92,19 @@ function handleLogout() {
             </svg>
             <span>{{ t("sidebar.search") }}</span>
           </button>
+
         </div>
       </div>
 
       <!-- Agent -->
       <div class="nav-group">
         <div class="nav-group-label" @click="toggleGroup('agent')">
-          <span>{{ groupLabel("Agent") }}</span>
+          <span>{{ t("sidebar.groupAgent") }}</span>
           <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('agent') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('agent')" class="nav-group-items">
+        <div v-show="!isGroupCollapsed('agent')">
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.jobs' }" @click="handleNav('hermes.jobs')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -175,12 +171,12 @@ function handleLogout() {
       <!-- Monitoring -->
       <div class="nav-group">
         <div class="nav-group-label" @click="toggleGroup('monitoring')">
-          <span>{{ groupLabel("Monitoring") }}</span>
+          <span>{{ t("sidebar.groupMonitoring") }}</span>
           <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('monitoring') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('monitoring')" class="nav-group-items">
+        <div v-show="!isGroupCollapsed('monitoring')">
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.logs' }" @click="handleNav('hermes.logs')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -211,12 +207,21 @@ function handleLogout() {
       <!-- System -->
       <div class="nav-group">
         <div class="nav-group-label" @click="toggleGroup('system')">
-          <span>{{ groupLabel("System") }}</span>
+          <span>{{ t("sidebar.groupSystem") }}</span>
           <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('system') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('system')" class="nav-group-items">
+        <div v-show="!isGroupCollapsed('system')">
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.gateways' }" @click="handleNav('hermes.gateways')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+              <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+              <line x1="6" y1="6" x2="6.01" y2="6" />
+              <line x1="6" y1="18" x2="6.01" y2="18" />
+            </svg>
+            <span>{{ t("sidebar.gateways") }}</span>
+          </button>
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.profiles' }" @click="handleNav('hermes.profiles')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -270,10 +275,13 @@ function handleLogout() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
           </a>
         </div>
-        <span class="version-text">Hermes Web v0.1.2</span>
+        <span class="version-text">Hermes Web v{{ appStore.serverVersion || "0.1.0" }}</span>
         <ThemeSwitch />
       </div>
+
     </div>
+
+
   </aside>
 </template>
 
@@ -352,11 +360,6 @@ function handleLogout() {
   }
 }
 
-:deep(.profile-selector) {
-  padding-top: 12px;
-  border-top: 1px solid $border-color;
-}
-
 .nav-group {
   display: flex;
   flex-direction: column;
@@ -367,12 +370,6 @@ function handleLogout() {
     padding-top: 8px;
     border-top: 1px solid $border-color;
   }
-}
-
-.nav-group-items {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 
 .nav-group-label {
@@ -500,26 +497,32 @@ function handleLogout() {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  overflow: hidden;
+  gap: 8px;
 }
 
 .version-links {
   display: flex;
   align-items: center;
-  flex-shrink: 0;
-  gap: 6px;
+  gap: 8px;
 }
 
-:deep(.theme-switch-container) {
-  flex-shrink: 0;
+.website-link {
+  color: $text-muted;
+  display: flex;
+  align-items: center;
+  transition: color 0.2s;
+
+  &:hover {
+    color: $text-primary;
+  }
 }
 
 .version-text {
-  flex: 0 0 auto;
-  overflow: visible;
+  flex: 1;
   white-space: nowrap;
 }
+
+
 
 // ─── Collapsed sidebar (icon-rail mode) ─────────────────────────
 
@@ -545,18 +548,7 @@ function handleLogout() {
   }
 
   .nav-group-label {
-    justify-content: center;
-    gap: 2px;
-    padding: 8px 0 4px;
-    letter-spacing: 0;
-
-    span {
-      max-width: 36px;
-      overflow: hidden;
-      text-align: center;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
+    display: none;
   }
 
   .nav-item {
@@ -573,53 +565,20 @@ function handleLogout() {
     }
   }
 
-  // Hide model selector in icon-rail mode, but keep the active profile avatar
-  // visible as the profile manager entry point.
+  // Keep group children visible — user can still see icons
+  .nav-group > div {
+    display: flex !important;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  // Hide selectors and footer text, keep theme switch
+  :deep(.profile-selector),
   :deep(.model-selector) {
     display: none;
   }
 
-  :deep(.profile-selector) {
-    display: flex;
-    justify-content: center;
-    padding: 8px 0;
-    margin: 0 0 6px;
-    border-top: 1px solid $border-color;
-  }
-
-  :deep(.profile-selector .selector-label),
-  :deep(.profile-selector .profile-name) {
-    display: none;
-  }
-
-  :deep(.profile-selector .profile-display) {
-    width: 36px;
-    height: 36px;
-    justify-content: center;
-    padding: 0;
-    gap: 0;
-    border: none;
-    border-radius: 0;
-    background: transparent;
-  }
-
-  :deep(.profile-selector .profile-display:hover) {
-    background: transparent;
-  }
-
-  :deep(.profile-selector .profile-avatar) {
-    width: 28px !important;
-    height: 28px !important;
-    flex-basis: 28px !important;
-  }
-
   .sidebar-footer {
-    .logout-item {
-      margin: 0;
-      padding: 10px 4px;
-      border-radius: $radius-sm;
-    }
-
     .logout-item span {
       display: none;
     }
@@ -713,4 +672,5 @@ function handleLogout() {
     }
   }
 }
+
 </style>
