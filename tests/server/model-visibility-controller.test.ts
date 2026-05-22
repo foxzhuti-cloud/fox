@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockReadFile, mockReadConfigYaml, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
+const { mockReadFile, mockReadConfigYaml, mockReadConfigYamlForProfile, mockFetchProviderModels, mockBuildModelGroups, mockReadAppConfig, mockWriteAppConfig, mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockReadConfigYaml: vi.fn(),
+  mockReadConfigYamlForProfile: vi.fn(),
   mockFetchProviderModels: vi.fn(),
   mockBuildModelGroups: vi.fn(() => ({ default: '', groups: [] })),
   mockReadAppConfig: vi.fn(),
@@ -23,10 +24,14 @@ vi.mock('fs', () => ({
 vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   getActiveEnvPath: () => '/fake/home/.hermes/.env',
   getActiveAuthPath: () => '/fake/home/.hermes/auth.json',
+  getActiveProfileName: () => 'default',
+  getProfileDir: () => '/fake/home/.hermes',
+  listProfileNamesFromDisk: () => ['default'],
 }))
 
 vi.mock('../../packages/server/src/services/config-helpers', () => ({
   readConfigYaml: mockReadConfigYaml,
+  readConfigYamlForProfile: mockReadConfigYamlForProfile,
   writeConfigYaml: vi.fn(),
   fetchProviderModels: mockFetchProviderModels,
   buildModelGroups: mockBuildModelGroups,
@@ -93,6 +98,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockReadFile.mockResolvedValue('DEEPSEEK_API_KEY=sk-test\n')
   mockReadConfigYaml.mockResolvedValue({ model: { default: 'deepseek-chat', provider: 'deepseek' } })
+  mockReadConfigYamlForProfile.mockResolvedValue({ model: { default: 'deepseek-chat', provider: 'deepseek' } })
   mockBuildModelGroups.mockReturnValue({ default: '', groups: [] })
   mockReadAppConfig.mockResolvedValue({})
   mockWriteAppConfig.mockImplementation(async patch => patch)
@@ -122,6 +128,27 @@ describe('models controller — model visibility', () => {
     expect(ctx.body.default_provider).toBe('deepseek')
     expect(ctx.body.model_visibility).toEqual({
       deepseek: { mode: 'include', models: ['deepseek-reasoner'] },
+    })
+  })
+
+  it('merges Web UI custom models into available provider groups', async () => {
+    mockReadAppConfig.mockResolvedValue({
+      customModels: {
+        deepseek: ['gemma-4-26b-a4b-it', 'deepseek-chat'],
+      },
+    })
+
+    const ctx = makeCtx()
+    await ctrl.getAvailable(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(ctx.body.groups[0]).toMatchObject({
+      provider: 'deepseek',
+      models: ['deepseek-chat', 'deepseek-reasoner', 'gemma-4-26b-a4b-it'],
+      available_models: ['deepseek-chat', 'deepseek-reasoner', 'gemma-4-26b-a4b-it'],
+    })
+    expect(ctx.body.custom_models).toEqual({
+      deepseek: ['gemma-4-26b-a4b-it', 'deepseek-chat'],
     })
   })
   it('accepts OAuth providers stored in credential_pool entries', async () => {
@@ -273,6 +300,63 @@ describe('models controller — model visibility', () => {
     expect(ctx.body.model_visibility).toEqual({
       openrouter: { mode: 'include', models: ['x'] },
     })
+  })
+
+  it('adds and removes custom models in web-ui app config only', async () => {
+    mockReadAppConfig.mockResolvedValueOnce({
+      customModels: { deepseek: ['existing'] },
+    })
+    mockWriteAppConfig.mockResolvedValueOnce({
+      customModels: { deepseek: ['existing', 'manual-model'] },
+    })
+
+    const addCtx = makeCtx({ provider: 'deepseek', model: 'manual-model' })
+    await ctrl.addCustomModel(addCtx)
+
+    expect(mockWriteAppConfig).toHaveBeenCalledWith({
+      customModels: { deepseek: ['existing', 'manual-model'] },
+    })
+    expect(addCtx.body).toEqual({
+      success: true,
+      custom_models: { deepseek: ['existing', 'manual-model'] },
+    })
+
+    mockReadAppConfig.mockResolvedValueOnce({
+      customModels: { deepseek: ['existing', 'manual-model'] },
+    })
+    mockWriteAppConfig.mockResolvedValueOnce({
+      customModels: { deepseek: ['existing'] },
+    })
+
+    const removeCtx = makeCtx({ provider: 'deepseek', model: 'manual-model' })
+    await ctrl.removeCustomModel(removeCtx)
+
+    expect(mockWriteAppConfig).toHaveBeenLastCalledWith({
+      customModels: { deepseek: ['existing'] },
+    })
+    expect(removeCtx.body).toEqual({
+      success: true,
+      custom_models: { deepseek: ['existing'] },
+    })
+  })
+
+  it('removes custom models from query params when DELETE body is missing', async () => {
+    mockReadAppConfig.mockResolvedValueOnce({
+      customModels: { deepseek: ['manual-model'] },
+    })
+    mockWriteAppConfig.mockResolvedValueOnce({
+      customModels: {},
+    })
+
+    const ctx = makeCtx()
+    ctx.request.body = undefined
+    ctx.query = { provider: 'deepseek', model: 'manual-model' }
+
+    await ctrl.removeCustomModel(ctx)
+
+    expect(ctx.status).toBe(200)
+    expect(mockWriteAppConfig).toHaveBeenCalledWith({ customModels: {} })
+    expect(ctx.body).toEqual({ success: true, custom_models: {} })
   })
 
   it('rejects empty include lists', async () => {

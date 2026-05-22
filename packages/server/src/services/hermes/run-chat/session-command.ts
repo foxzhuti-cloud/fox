@@ -5,7 +5,7 @@ import type { AgentBridgeClient } from '../agent-bridge'
 import { flushBridgePendingToDb } from './bridge-message'
 import { buildDbHistory, estimateSnapshotAwareHistoryUsage, forceCompressBridgeHistory, getOrCreateSession, replaceState } from './compression'
 import { handleAbort } from './abort'
-import { calcAndUpdateUsage } from './usage'
+import { calcAndUpdateUsage, contextTokensWithCachedOverhead, updateMessageContextTokenUsage } from './usage'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
 
 type CommandName =
@@ -30,7 +30,6 @@ interface SessionCommandContext {
   socket: Socket
   sessionMap: Map<string, SessionState>
   bridge: AgentBridgeClient
-  gatewayManager: any
   profile: string
   model?: string
   instructions?: string
@@ -233,41 +232,45 @@ export async function handleSessionCommand(
       try {
         const history = await buildDbHistory(sessionId, { excludeLastUser: true })
         const usageEstimate = estimateSnapshotAwareHistoryUsage(sessionId, history)
+        const beforeContextTokens = contextTokensWithCachedOverhead(state, usageEstimate.tokenCount)
         emit('compression.started', {
           event: 'compression.started',
           message_count: usageEstimate.messageCount,
-          token_count: usageEstimate.tokenCount,
+          token_count: beforeContextTokens,
           source: 'command',
         })
         const result = await forceCompressBridgeHistory(
           sessionId,
           ctx.profile,
           [],
-          (profile: string) => ctx.gatewayManager.getUpstream(profile),
-          (profile: string) => ctx.gatewayManager.getApiKey(profile),
         )
         state.bridgeCompressionResults = state.bridgeCompressionResults || {}
-        await calcAndUpdateUsage(sessionId, state, emit)
+        const usage = await calcAndUpdateUsage(sessionId, state, emit)
+        const afterContextTokens = contextTokensWithCachedOverhead(state, result.afterTokens)
         emit('compression.completed', {
           event: 'compression.completed',
           compressed: result.compressed,
           llmCompressed: result.llmCompressed,
           totalMessages: result.beforeMessages,
           resultMessages: result.resultMessages,
-          beforeTokens: result.beforeTokens,
+          beforeTokens: beforeContextTokens,
           afterTokens: result.afterTokens,
           summaryTokens: result.summaryTokens,
           verbatimCount: result.verbatimCount,
           compressedStartIndex: result.compressedStartIndex,
+          contextTokens: afterContextTokens,
           source: 'command',
         })
+        updateMessageContextTokenUsage(sessionId, state, emit, result.afterTokens, usage)
         emitCommand({
           action: 'compress',
-          message: `Compression completed: ${result.beforeMessages} -> ${result.resultMessages} messages, ${result.beforeTokens} -> ${result.afterTokens} tokens.`,
+          message: `Compression completed: ${result.beforeMessages} -> ${result.resultMessages} messages, ${beforeContextTokens} -> ${afterContextTokens} tokens.`,
           beforeMessages: result.beforeMessages,
           resultMessages: result.resultMessages,
-          beforeTokens: result.beforeTokens,
-          afterTokens: result.afterTokens,
+          beforeTokens: beforeContextTokens,
+          afterTokens: afterContextTokens,
+          messageBeforeTokens: result.beforeTokens,
+          messageAfterTokens: result.afterTokens,
           compressed: result.compressed,
         })
       } catch (err) {
@@ -312,11 +315,11 @@ export async function handleSessionCommand(
       try {
         if (wasWorking) {
           flushBridgePendingToDb(state, sessionId)
-          await ctx.bridge.interrupt(sessionId, 'Destroyed by user').catch((err) => {
+          await ctx.bridge.interrupt(sessionId, 'Destroyed by user', state.profile).catch((err) => {
             logger.warn(err, '[chat-run-socket] /destroy interrupt failed for session %s', sessionId)
           })
         }
-        await ctx.bridge.destroy(sessionId).catch((err) => {
+        await ctx.bridge.destroy(sessionId, state.profile).catch((err) => {
           bridgeReachable = false
           bridgeError = err instanceof Error ? err.message : String(err)
           logger.warn(err, '[chat-run-socket] /destroy bridge unavailable for session %s', sessionId)
@@ -337,6 +340,7 @@ export async function handleSessionCommand(
         state.queue = []
         state.bridgePendingAssistantContent = undefined
         state.bridgePendingReasoningContent = undefined
+        state.bridgePendingToolCallMarkup = undefined
         state.bridgeOutput = undefined
         state.bridgePendingTools = undefined
         state.bridgeCompressionResults = undefined
@@ -366,6 +370,7 @@ export async function handleSessionCommand(
 function clearTransientRunState(state: SessionState) {
   state.events = []
   state.bridgePendingTools = undefined
+  state.bridgePendingToolCallMarkup = undefined
   state.bridgeCompressionResults = undefined
   state.responseRun = undefined
   state.activeRunMarker = undefined

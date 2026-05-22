@@ -9,7 +9,9 @@ import { copyToClipboard } from "@/utils/clipboard";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
 import { useChatStore } from "@/stores/hermes/chat";
+import { useProfilesStore } from "@/stores/hermes/profiles";
 import { useSettingsStore } from "@/stores/hermes/settings";
+import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
 import {
   copyTextToClipboard,
   handleCodeBlockCopyClick,
@@ -27,11 +29,14 @@ const JSON_MAX_KEYS_PER_OBJECT = 50;
 const JSON_MAX_ITEMS_PER_ARRAY = 50;
 const JSON_TRUNCATED_KEY = "__truncated__";
 
-const props = defineProps<{ message: Message; highlight?: boolean }>();
+const props = defineProps<{ message: Message; highlight?: boolean; headingIdPrefix?: string }>();
 const { t } = useI18n();
 const toast = useMessage();
 
 const isSystem = computed(() => props.message.role === "system");
+const isAgentError = computed(() => props.message.role === "assistant" && props.message.systemType === "error");
+
+const effectiveHeadingIdPrefix = computed(() => props.headingIdPrefix || `msg-${props.message.id}`);
 const isCommandMessage = computed(() => props.message.role === "command" || props.message.systemType === "command");
 const isCommandError = computed(() => props.message.role === "command" && props.message.systemType === "error");
 const isStatusCommand = computed(() => isCommandMessage.value && props.message.commandAction === "status");
@@ -178,9 +183,12 @@ const toolExpanded = ref(false);
 const previewUrl = ref<string | null>(null);
 
 const chatStore = useChatStore();
+const profilesStore = useProfilesStore();
 const settingsStore = useSettingsStore();
 const speech = useGlobalSpeech();
 const voiceSettings = useVoiceSettings();
+const assistantProfileName = computed(() => chatStore.activeSession?.profile || profilesStore.activeProfileName || "default");
+const assistantProfileAvatar = computed(() => profilesStore.profiles.find(profile => profile.name === assistantProfileName.value)?.avatar);
 
 // Copy entire bubble content
 const copyableContent = computed(() => {
@@ -771,17 +779,19 @@ onBeforeUnmount(() => {
     </template>
     <template v-else>
       <div class="msg-body">
-        <img
+        <ProfileAvatar
           v-if="message.role === 'assistant'"
-          src="/logo.png"
-          alt="Hermes"
           class="msg-avatar"
+          :name="assistantProfileName"
+          :avatar="assistantProfileAvatar"
+          :size="40"
         />
         <div class="msg-content" :class="message.role">
           <div
             class="message-bubble"
             :class="{
               system: isSystem,
+              'agent-error': isAgentError,
               command: isCommandMessage,
               'command-error': isCommandError,
               'speech-playing': isPlayingThisMessage && !isPausedThisMessage,
@@ -868,6 +878,7 @@ onBeforeUnmount(() => {
             <MarkdownRenderer
               v-if="parsedThinking.body && message.role === 'assistant'"
               :content="parsedThinking.body"
+              :heading-id-prefix="effectiveHeadingIdPrefix"
             />
 
             <!-- Render user message content -->
@@ -915,6 +926,7 @@ onBeforeUnmount(() => {
             <MarkdownRenderer
               v-if="message.role === 'assistant' && message.content && !parsedThinking.body"
               :content="message.content"
+              :heading-id-prefix="effectiveHeadingIdPrefix"
             />
 
             <!-- Render system message content -->
@@ -1033,6 +1045,12 @@ onBeforeUnmount(() => {
       background-color: $msg-assistant-bg;
       border-radius: 10px;
     }
+
+    .message-bubble.agent-error {
+      color: $error;
+      background-color: rgba(var(--error-rgb), 0.06);
+      border: 1px solid rgba(var(--error-rgb), 0.2);
+    }
   }
 
   &.tool {
@@ -1108,6 +1126,20 @@ onBeforeUnmount(() => {
   &.command-error {
     border-color: rgba(var(--warning-rgb), 0.28);
     background-color: rgba(var(--warning-rgb), 0.06);
+  }
+
+  &.agent-error {
+    color: $error;
+    background-color: rgba(var(--error-rgb), 0.06);
+    border: 1px solid rgba(var(--error-rgb), 0.2);
+
+    :deep(.markdown-body),
+    :deep(.markdown-body p),
+    :deep(.markdown-body li),
+    :deep(.markdown-body strong),
+    :deep(.markdown-body code) {
+      color: $error;
+    }
   }
 
   &.speech-playing {

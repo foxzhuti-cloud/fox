@@ -36,6 +36,7 @@ COPY --from=builder /app/package.json /app/package.json
 ENV NODE_ENV=production
 ENV HOME=/home/agent
 ENV HERMES_HOME=/home/agent/.hermes
+ENV HERMES_WEB_UI_MANAGED_GATEWAY=1
 ENV PATH=/opt/hermes/.venv/bin:$PATH
 
 EXPOSE 6060

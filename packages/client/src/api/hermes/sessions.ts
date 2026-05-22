@@ -2,6 +2,7 @@ import { request, getApiKey, getBaseUrlValue } from '../client'
 
 export interface SessionSummary {
   id: string
+  profile?: string
   source: string
   model: string
   provider?: string
@@ -48,10 +49,11 @@ export interface HermesMessage {
   reasoning: string | null
 }
 
-export async function fetchSessions(source?: string, limit?: number): Promise<SessionSummary[]> {
+export async function fetchSessions(source?: string, limit?: number, profile?: string): Promise<SessionSummary[]> {
   const params = new URLSearchParams()
   if (source) params.set('source', source)
   if (limit) params.set('limit', String(limit))
+  if (profile) params.set('profile', profile)
   const query = params.toString()
   const res = await request<{ sessions: SessionSummary[] }>(`/api/hermes/sessions${query ? `?${query}` : ''}`)
   return res.sessions
@@ -69,11 +71,12 @@ export async function fetchHermesSessions(source?: string, limit?: number): Prom
   return res.sessions
 }
 
-export async function searchSessions(q: string, source?: string, limit?: number): Promise<SessionSearchResult[]> {
+export async function searchSessions(q: string, source?: string, limit?: number, profile?: string): Promise<SessionSearchResult[]> {
   const params = new URLSearchParams()
   params.set('q', q)
   if (source) params.set('source', source)
   if (limit) params.set('limit', String(limit))
+  if (profile) params.set('profile', profile)
   const query = params.toString()
   const res = await request<{ results: SessionSearchResult[] }>(`/api/hermes/search/sessions?${query}`)
   return res.results
@@ -231,9 +234,11 @@ export async function fetchSessionUsageSingle(id: string): Promise<{ input_token
   }
 }
 
-export async function fetchContextLength(profile?: string): Promise<number> {
+export async function fetchContextLength(profile?: string, provider?: string, model?: string): Promise<number> {
   const params = new URLSearchParams()
   if (profile) params.set('profile', profile)
+  if (provider) params.set('provider', provider)
+  if (model) params.set('model', model)
   const query = params.toString()
   const res = await request<{ context_length: number }>(`/api/hermes/sessions/context-length${query ? `?${query}` : ''}`)
   return res.context_length

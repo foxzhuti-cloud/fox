@@ -8,12 +8,17 @@ import { getSystemPrompt } from '../../../lib/llm-prompt'
 import { getSession, createSession, addMessage, updateSession, updateSessionStats } from '../../../db/hermes/session-store'
 import { updateUsage } from '../../../db/hermes/usage-store'
 import { logger, bridgeLogger } from '../../logger'
-import { AgentBridgeClient, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
-import { readConfigYaml } from '../../config-helpers'
+import { AgentBridgeClient, type AgentBridgeContextEstimate, type AgentBridgeMessage, type AgentBridgeOutput } from '../agent-bridge'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview, isContentBlockArray } from './content-blocks'
-import { buildCompressedHistory } from './compression'
-import { pushState, replaceState } from './compression'
-import { calcAndUpdateUsage, estimateUsageTokensFromMessages } from './usage'
+import { buildCompressedHistory, buildDbHistory, buildSnapshotAwareHistory, forceCompressBridgeHistory, pushState, replaceState } from './compression'
+import {
+  calcAndUpdateUsage,
+  contextTokensWithCachedOverhead,
+  estimateUsageTokensFromMessages,
+  getCachedBridgeContextOverhead,
+  updateContextTokenUsage,
+  updateMessageContextTokenUsage,
+} from './usage'
 import {
   flushBridgePendingToDb,
   ensureOpenBridgeAssistantMessage,
@@ -21,37 +26,69 @@ import {
   recordBridgeToolStarted,
   recordBridgeToolCompleted,
 } from './bridge-message'
-import { forceCompressBridgeHistory } from './compression'
 import { summarizeToolArguments } from './response-utils'
-import { buildDbHistory } from './compression'
-import { convertHistoryFormat } from './message-format'
 import type { ContentBlock, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
+import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
+import { filterBridgeToolCallMarkupDelta } from './bridge-delta'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 
-type RunModelGroup = { provider: string; models: string[] }
-
-async function resolveDefaultModelConfig(): Promise<{ model: string; provider: string }> {
-  try {
-    const config = await readConfigYaml()
-    const modelConfig = config?.model
-    const model = typeof modelConfig === 'string'
-      ? modelConfig.trim()
-      : String(modelConfig?.default || '').trim()
-    const provider = typeof modelConfig === 'object'
-      ? String(modelConfig?.provider || '').trim()
-      : ''
-    return { model, provider }
-  } catch {
-    return { model: '', provider: '' }
-  }
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
-function hasModelInGroups(groups: RunModelGroup[] | undefined, provider: string, model: string): boolean {
-  if (!groups?.length || !provider || !model) return false
-  const group = groups.find(item => item.provider === provider)
-  return Array.isArray(group?.models) && group.models.includes(model)
+function looksLikeAgentFailure(value: string): boolean {
+  return /\bAPI call failed after\b/i.test(value)
+    || /\bHTTP\s+(?:4\d\d|5\d\d)\b/i.test(value)
+    || /\b(?:401|403|429|500|502|503|504)\b/.test(value) && /\b(?:unauthorized|forbidden|rate limit|unavailable|failed|error)\b/i.test(value)
+}
+
+export function bridgeTerminalError(chunk: Pick<AgentBridgeOutput, 'status' | 'error' | 'result'>): string | null {
+  const result = chunk.result && typeof chunk.result === 'object' && !Array.isArray(chunk.result)
+    ? chunk.result as Record<string, unknown>
+    : null
+  const resultError = result
+    ? stringValue(result.error)
+      || stringValue(result.exception)
+      || stringValue(result.message)
+    : ''
+  const finalResponse = result ? stringValue(result.final_response) : ''
+
+  if (chunk.status === 'error') {
+    return stringValue(chunk.error) || resultError || finalResponse || 'Agent run failed'
+  }
+
+  if (result?.failed === true || result?.completed === false) {
+    return resultError || finalResponse || 'Agent reported failure'
+  }
+
+  if (resultError) return resultError
+  if (finalResponse && looksLikeAgentFailure(finalResponse)) return finalResponse
+
+  return null
+}
+
+function finiteToken(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : undefined
+}
+
+function cacheBridgeContext(state: SessionState, data: Record<string, unknown> | AgentBridgeContextEstimate) {
+  const fixedContextTokens = finiteToken(data.fixed_context_tokens)
+  if (fixedContextTokens == null) return
+  state.bridgeContext = {
+    fixedContextTokens,
+    systemPromptTokens: finiteToken(data.system_prompt_tokens),
+    toolTokens: finiteToken(data.tool_tokens),
+    systemPromptChars: finiteToken(data.system_prompt_chars),
+    toolCount: finiteToken(data.tool_count),
+    toolNames: Array.isArray(data.tool_names) ? data.tool_names.map(String) : undefined,
+    profile: typeof data.profile === 'string' ? data.profile : state.bridgeContext?.profile,
+    model: typeof data.model === 'string' ? data.model : state.bridgeContext?.model,
+    provider: typeof data.provider === 'string' ? data.provider : state.bridgeContext?.provider,
+  }
 }
 
 export async function handleBridgeRun(
@@ -60,7 +97,6 @@ export async function handleBridgeRun(
   data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
-  gatewayManager: any,
   bridge: AgentBridgeClient,
   _skipUserMessage = false,
   loadSessionStateFromDbFn: (sid: string, sessionMap: Map<string, SessionState>) => Promise<SessionState>,
@@ -78,14 +114,14 @@ export async function handleBridgeRun(
   const sessionRow = getSession(session_id)
   const sessionModel = sessionRow?.model || ''
   const sessionProvider = sessionRow?.provider || ''
-  const hasGroups = Array.isArray(data.model_groups) && data.model_groups.length > 0
-  const sessionModelAvailable = hasGroups && hasModelInGroups(data.model_groups, sessionProvider, sessionModel)
-  const shouldUseDefault = !sessionModel || !sessionProvider || !sessionModelAvailable
-  const defaultModelConfig = shouldUseDefault
-    ? await resolveDefaultModelConfig()
-    : { model: '', provider: '' }
-  const resolvedModel = shouldUseDefault ? defaultModelConfig.model : sessionModel
-  const resolvedProvider = shouldUseDefault ? defaultModelConfig.provider : sessionProvider
+  const { model: resolvedModel, provider: resolvedProvider } = await resolveBridgeRunModelConfig({
+    profile,
+    sessionModel,
+    sessionProvider,
+    requestedModel: data.model,
+    requestedProvider: data.provider,
+    modelGroups: data.model_groups,
+  })
   if (sessionRow) {
     const updates: { model?: string; provider?: string } = {}
     if (resolvedModel && sessionRow.model !== resolvedModel) updates.model = resolvedModel
@@ -117,6 +153,7 @@ export async function handleBridgeRun(
   state.bridgeOutput = ''
   state.bridgePendingAssistantContent = ''
   state.bridgePendingReasoningContent = ''
+  state.bridgePendingToolCallMarkup = ''
   state.bridgeToolCounter = 0
   state.bridgePendingTools = []
   state.responseRun = undefined
@@ -154,12 +191,40 @@ export async function handleBridgeRun(
 
   const history = await buildCompressedHistory(
     session_id, profile,
-    gatewayManager.getUpstream(profile).replace(/\/$/, ''),
-    gatewayManager.getApiKey(profile) || undefined,
+    '',
+    undefined,
     emit,
     sessionMap,
+    { model: resolvedModel, provider: resolvedProvider },
+    async (messages) => {
+      const cachedOverhead = getCachedBridgeContextOverhead(state)
+      if (cachedOverhead != null) {
+        const messageUsage = estimateUsageTokensFromMessages(messages)
+        return cachedOverhead + messageUsage.inputTokens + messageUsage.outputTokens
+      }
+      const estimate = await bridge.contextEstimate(
+        session_id,
+        messages,
+        fullInstructions,
+        profile,
+        { model: resolvedModel, provider: resolvedProvider },
+      )
+      cacheBridgeContext(state, estimate)
+      bridgeLogger.info({
+        sessionId: session_id,
+        profile,
+        model: resolvedModel,
+        provider: resolvedProvider,
+        messages: estimate.message_count,
+        toolCount: estimate.tool_count,
+        systemPromptChars: estimate.system_prompt_chars,
+        fixedContextTokens: estimate.fixed_context_tokens,
+        fullContextTokens: estimate.token_count,
+      }, '[chat-run-socket] full context estimate')
+      return estimate.token_count
+    },
   )
-  const bridgeHistory = history.length > 0 ? convertHistoryFormat(history) : history
+  const bridgeHistory = history
 
   try {
     const bridgeInput = isContentBlockArray(input)
@@ -207,7 +272,21 @@ export async function handleBridgeRun(
     })
 
     for await (const chunk of bridge.streamOutput(started.run_id)) {
-      await applyBridgeChunkAsync(nsp, socket, state, session_id, runMarker, chunk, emit, profile, sessionMap, gatewayManager, bridge, dequeueNextQueuedRun)
+      await applyBridgeChunkAsync(
+        nsp,
+        socket,
+        state,
+        session_id,
+        runMarker,
+        chunk,
+        emit,
+        profile,
+        sessionMap,
+        bridge,
+        dequeueNextQueuedRun,
+        fullInstructions,
+        { model: resolvedModel, provider: resolvedProvider },
+      )
       if (chunk.done) break
     }
   } catch (err: any) {
@@ -220,17 +299,112 @@ export async function handleBridgeRun(
     state.runId = undefined
     state.activeRunMarker = undefined
     state.events = []
+    state.bridgePendingToolCallMarkup = undefined
     flushBridgePendingToDb(state, session_id)
     updateSessionStats(session_id)
     const message = err instanceof Error ? err.message : String(err)
-    emit('run.failed', { event: 'run.failed', error: message, queue_remaining: queueLen })
     const errUsage = await calcAndUpdateUsage(session_id, state, emit)
+    const errContextTokens = await refreshFinalContextUsage({
+      sessionId: session_id,
+      profile,
+      model: resolvedModel,
+      provider: resolvedProvider,
+      instructions: fullInstructions,
+      state,
+      usage: errUsage,
+      emit,
+      bridge,
+    })
     updateUsage(session_id, {
       inputTokens: errUsage.inputTokens,
       outputTokens: errUsage.outputTokens,
-      profile: state.profile,
+      profile,
+    })
+    emit('run.failed', {
+      event: 'run.failed',
+      error: message,
+      inputTokens: errUsage.inputTokens,
+      outputTokens: errUsage.outputTokens,
+      contextTokens: errContextTokens,
+      queue_remaining: queueLen,
     })
     if (queueLen > 0) dequeueNextQueuedRun(socket, session_id)
+  }
+}
+
+async function refreshFinalContextUsage(args: {
+  sessionId: string
+  profile: string
+  model?: string | null
+  provider?: string | null
+  instructions: string
+  state: SessionState
+  usage: { inputTokens: number; outputTokens: number }
+  emit: (event: string, payload: any) => void
+  bridge: AgentBridgeClient
+}): Promise<number | undefined> {
+  try {
+    const dbHistory = await buildDbHistory(args.sessionId, { excludeLastUser: false })
+    const finalHistory = await buildSnapshotAwareHistory(
+      args.sessionId,
+      args.profile,
+      dbHistory,
+      { model: args.model, provider: args.provider },
+    )
+    const finalMessageUsage = estimateUsageTokensFromMessages(finalHistory)
+    const finalMessageTokens = finalMessageUsage.inputTokens + finalMessageUsage.outputTokens
+    if (getCachedBridgeContextOverhead(args.state) != null) {
+      const contextTokens = updateMessageContextTokenUsage(
+        args.sessionId,
+        args.state,
+        args.emit,
+        finalMessageTokens,
+        args.usage,
+      )
+      bridgeLogger.info({
+        sessionId: args.sessionId,
+        profile: args.profile,
+        model: args.model,
+        provider: args.provider,
+        messages: finalHistory.length,
+        fixedContextTokens: args.state.bridgeContext?.fixedContextTokens,
+        messageTokens: finalMessageTokens,
+        fullContextTokens: contextTokens,
+      }, '[chat-run-socket] final cached context estimate')
+      return contextTokens
+    }
+    const estimate = await args.bridge.contextEstimate(
+      args.sessionId,
+      finalHistory,
+      args.instructions,
+      args.profile,
+      { model: args.model ?? undefined, provider: args.provider ?? undefined },
+    )
+    cacheBridgeContext(args.state, estimate)
+    const contextTokens = typeof estimate.token_count === 'number' && Number.isFinite(estimate.token_count) && estimate.token_count > 0
+      ? Math.floor(estimate.token_count)
+      : undefined
+    if (contextTokens == null) return args.state.contextTokens
+
+    updateContextTokenUsage(args.sessionId, args.state, args.emit, contextTokens, args.usage)
+    bridgeLogger.info({
+      sessionId: args.sessionId,
+      profile: args.profile,
+      model: args.model,
+      provider: args.provider,
+      messages: estimate.message_count,
+      toolCount: estimate.tool_count,
+      systemPromptChars: estimate.system_prompt_chars,
+      fullContextTokens: contextTokens,
+    }, '[chat-run-socket] final full context estimate')
+    return contextTokens
+  } catch (err) {
+    bridgeLogger.warn({
+      err: err instanceof Error ? { message: err.message, name: err.name } : err,
+      sessionId: args.sessionId,
+      profile: args.profile,
+    }, '[chat-run-socket] final full context estimate failed')
+    return args.state.contextTokens
   }
 }
 
@@ -244,9 +418,10 @@ async function applyBridgeChunkAsync(
   emit: (event: string, payload: any) => void,
   profile: string,
   sessionMap: Map<string, SessionState>,
-  gatewayManager: any,
   bridge: AgentBridgeClient,
   dequeueNextQueuedRun: (socket: Socket, sessionId: string, fallbackProfile?: string) => void,
+  instructions: string,
+  modelContext: { model?: string | null; provider?: string | null },
 ): Promise<void> {
   if (state.activeRunMarker !== runMarker) {
     bridgeLogger.info({
@@ -262,7 +437,17 @@ async function applyBridgeChunkAsync(
 
   for (const ev of chunk.events || []) {
     const evType = ev.event as string | undefined
-    if (evType === 'tool.started') {
+    if (evType === 'bridge.context.ready') {
+      cacheBridgeContext(state, ev)
+      const usage = await calcAndUpdateUsage(sessionId, state, emit)
+      updateMessageContextTokenUsage(
+        sessionId,
+        state,
+        emit,
+        usage.inputTokens + usage.outputTokens,
+        usage,
+      )
+    } else if (evType === 'tool.started') {
       flushBridgePendingToDb(state, sessionId, runMarker)
       const toolName = (ev.tool_name as string) || ''
       const args = ev.args as Record<string, unknown> | undefined
@@ -338,9 +523,19 @@ async function applyBridgeChunkAsync(
     } else if (evType === 'bridge.compression.requested') {
       const bridgeHistory = await buildDbHistory(sessionId, { excludeLastUser: true })
       const bridgeUsage = estimateUsageTokensFromMessages(bridgeHistory)
-      const tokenCount = bridgeHistory.length > 0
-        ? bridgeUsage.inputTokens + bridgeUsage.outputTokens
-        : ev.approx_tokens
+      const messageOnlyTokens = bridgeUsage.inputTokens + bridgeUsage.outputTokens
+      const tokenCount = typeof ev.approx_tokens === 'number' && Number.isFinite(ev.approx_tokens) && ev.approx_tokens > 0
+        ? ev.approx_tokens
+        : messageOnlyTokens
+      bridgeLogger.info({
+        sessionId,
+        profile,
+        bridgeMessages: ev.message_count,
+        dbMessages: bridgeHistory.length,
+        messageOnlyTokens,
+        fullContextTokens: tokenCount,
+        source: typeof ev.approx_tokens === 'number' ? 'bridge' : 'message-only-fallback',
+      }, '[chat-run-socket] bridge compression token estimate')
       const payload = {
         event: 'compression.started',
         run_id: chunk.run_id,
@@ -357,8 +552,7 @@ async function applyBridgeChunkAsync(
             sessionId,
             profile,
             ev.messages as ChatMessage[],
-            (p: string) => gatewayManager.getUpstream(p),
-            (p: string) => gatewayManager.getApiKey(p),
+            typeof ev.approx_tokens === 'number' ? ev.approx_tokens : undefined,
           )
           state.bridgeCompressionResults = state.bridgeCompressionResults || {}
           state.bridgeCompressionResults[String(ev.request_id)] = compressed
@@ -373,6 +567,11 @@ async function applyBridgeChunkAsync(
       const compressionResult = ev.request_id
         ? state.bridgeCompressionResults?.[String(ev.request_id)]
         : undefined
+      const bridgeAfterContextTokens = finiteToken(ev.result_approx_tokens)
+      const messageAfterTokens = finiteToken(compressionResult?.afterTokens)
+      const afterContextTokens = messageAfterTokens != null && getCachedBridgeContextOverhead(state) != null
+        ? contextTokensWithCachedOverhead(state, messageAfterTokens)
+        : bridgeAfterContextTokens ?? messageAfterTokens
       const payload = {
         event: 'compression.completed',
         run_id: chunk.run_id,
@@ -382,7 +581,8 @@ async function applyBridgeChunkAsync(
         totalMessages: compressionResult?.beforeMessages ?? ev.message_count,
         resultMessages: compressionResult?.resultMessages ?? ev.result_messages,
         beforeTokens: compressionResult?.beforeTokens ?? ev.approx_tokens,
-        afterTokens: compressionResult?.afterTokens,
+        afterTokens: messageAfterTokens ?? bridgeAfterContextTokens,
+        contextTokens: afterContextTokens,
         summaryTokens: compressionResult?.summaryTokens,
         verbatimCount: compressionResult?.verbatimCount,
         compressedStartIndex: compressionResult?.compressedStartIndex,
@@ -393,7 +593,12 @@ async function applyBridgeChunkAsync(
       }
       replaceState(sessionMap, sessionId, 'compression.completed', payload)
       emit('compression.completed', payload)
-      await calcAndUpdateUsage(sessionId, state, emit)
+      const usage = await calcAndUpdateUsage(sessionId, state, emit)
+      if (messageAfterTokens != null && getCachedBridgeContextOverhead(state) != null) {
+        updateMessageContextTokenUsage(sessionId, state, emit, messageAfterTokens, usage)
+      } else {
+        updateContextTokenUsage(sessionId, state, emit, afterContextTokens, usage)
+      }
     } else if (evType === 'bridge.compression.failed') {
       const payload = {
         event: 'compression.completed',
@@ -421,30 +626,33 @@ async function applyBridgeChunkAsync(
   }
 
   if (chunk.delta) {
-    state.bridgeOutput = (state.bridgeOutput || '') + chunk.delta
-    state.bridgePendingAssistantContent = (state.bridgePendingAssistantContent || '') + chunk.delta
-    const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
-    if (last?.role === 'assistant' && last.finish_reason == null) {
-      last.content += chunk.delta
-      syncBridgeReasoningToMessage(last, state.bridgePendingReasoningContent)
-    } else {
-      state.messages.push({
-        id: state.messages.length + 1,
-        session_id: sessionId,
-        runMarker,
-        role: 'assistant',
-        content: chunk.delta,
-        reasoning: state.bridgePendingReasoningContent || null,
-        reasoning_content: state.bridgePendingReasoningContent || null,
-        timestamp: Math.floor(Date.now() / 1000),
+    const delta = filterBridgeToolCallMarkupDelta(state, chunk.delta)
+    if (delta) {
+      state.bridgeOutput = (state.bridgeOutput || '') + delta
+      state.bridgePendingAssistantContent = (state.bridgePendingAssistantContent || '') + delta
+      const last = [...state.messages].reverse().find(m => m.runMarker === runMarker)
+      if (last?.role === 'assistant' && last.finish_reason == null) {
+        last.content += delta
+        syncBridgeReasoningToMessage(last, state.bridgePendingReasoningContent)
+      } else {
+        state.messages.push({
+          id: state.messages.length + 1,
+          session_id: sessionId,
+          runMarker,
+          role: 'assistant',
+          content: delta,
+          reasoning: state.bridgePendingReasoningContent || null,
+          reasoning_content: state.bridgePendingReasoningContent || null,
+          timestamp: Math.floor(Date.now() / 1000),
+        })
+      }
+      emit('message.delta', {
+        event: 'message.delta',
+        run_id: chunk.run_id,
+        delta,
+        output: state.bridgeOutput,
       })
     }
-    emit('message.delta', {
-      event: 'message.delta',
-      run_id: chunk.run_id,
-      delta: chunk.delta,
-      output: state.bridgeOutput,
-    })
   }
 
   if (!chunk.done) return
@@ -459,9 +667,21 @@ async function applyBridgeChunkAsync(
   }
 
   flushBridgePendingToDb(state, sessionId)
+  state.bridgePendingToolCallMarkup = undefined
   updateSessionStats(sessionId)
   await delay(BRIDGE_USAGE_FLUSH_DELAY_MS)
   const usage = await calcAndUpdateUsage(sessionId, state, emit)
+  const contextTokens = await refreshFinalContextUsage({
+    sessionId,
+    profile,
+    model: modelContext.model,
+    provider: modelContext.provider,
+    instructions,
+    state,
+    usage,
+    emit,
+    bridge,
+  })
   updateUsage(sessionId, {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
@@ -479,15 +699,17 @@ async function applyBridgeChunkAsync(
   state.runId = undefined
   state.activeRunMarker = undefined
   state.events = []
-  const eventName = chunk.status === 'error' ? 'run.failed' : 'run.completed'
+  const terminalError = bridgeTerminalError(chunk)
+  const eventName = terminalError ? 'run.failed' : 'run.completed'
   const payload = {
     event: eventName,
     run_id: chunk.run_id,
     output: chunk.output || state.bridgeOutput || '',
     result: chunk.result,
-    error: chunk.error,
+    error: terminalError || chunk.error,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
+    contextTokens,
     queue_remaining: state.queue.length,
   }
   emit(eventName, payload)
