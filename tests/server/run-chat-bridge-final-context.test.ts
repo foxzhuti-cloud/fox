@@ -92,6 +92,7 @@ function makeSocket() {
     connected: true,
     emit: vi.fn(),
     join: vi.fn(),
+    to: vi.fn(() => ({ emit: vi.fn() })),
   } as any
 }
 
@@ -168,10 +169,12 @@ describe('bridge run final context usage', () => {
         { role: 'user', content: 'hello' },
         { role: 'assistant', content: 'done' },
       ],
-      'system prompt',
+      expect.stringContaining('[Current Hermes profile: default]'),
       'default',
       { model: 'gpt-test', provider: 'openai' },
     )
+    expect(bridge.contextEstimate.mock.calls[0][2]).toContain('system prompt')
+    expect(bridge.contextEstimate.mock.calls[0][2]).toContain('X-Hermes-Profile')
     expect(state.contextTokens).toBe(12345)
     expect(emit).toHaveBeenCalledWith('usage.updated', expect.objectContaining({
       inputTokens: 11,
@@ -182,6 +185,139 @@ describe('bridge run final context usage', () => {
       inputTokens: 11,
       outputTokens: 7,
       contextTokens: 12345,
+    }))
+  })
+
+  it('evaluates active goals after a successful bridge run and queues continuation prompts', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const dequeueNextQueuedRun = vi.fn()
+    addMessageMock.mockReturnValue(42)
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      goalEvaluate: vi.fn().mockResolvedValue({
+        handled: true,
+        should_continue: true,
+        continuation_prompt: '[Continuing toward your standing goal]\nGoal: fix tests',
+        message: '↻ Continuing toward goal (1/20): tests still fail',
+        verdict: 'continue',
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield {
+          run_id: 'run-1',
+          done: true,
+          status: 'completed',
+          output: 'not finished',
+          result: { final_response: 'not finished' },
+        }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      {
+        input: 'hello',
+        session_id: 'session-1',
+        model_groups: [{ provider: 'openai', models: ['gpt-test'] }],
+      },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      dequeueNextQueuedRun,
+    )
+
+    expect(bridge.goalEvaluate).toHaveBeenCalledWith('session-1', 'not finished', 'default')
+    expect(addMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: 'session-1',
+      role: 'command',
+      content: '↻ Continuing toward goal (1/20): tests still fail',
+    }))
+    expect(emit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      command: 'goal',
+      action: 'continue',
+      message: '↻ Continuing toward goal (1/20): tests still fail',
+    }))
+    expect(state.queue).toEqual([expect.objectContaining({
+      input: '[Continuing toward your standing goal]\nGoal: fix tests',
+      displayInput: null,
+      storageMessage: '[Continuing toward your standing goal]\nGoal: fix tests',
+      model: 'gpt-test',
+      provider: 'openai',
+      model_groups: [{ provider: 'openai', models: ['gpt-test'] }],
+      goalContinuation: true,
+    })])
+    expect(dequeueNextQueuedRun).toHaveBeenCalledWith(socket, 'session-1')
+  })
+
+  it('skips hidden goal continuation runs without pausing when the judge is unavailable', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const dequeueNextQueuedRun = vi.fn()
+    addMessageMock.mockReturnValue(43)
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      command: vi.fn(),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      goalEvaluate: vi.fn().mockResolvedValue({
+        handled: true,
+        should_continue: true,
+        continuation_prompt: '[Continuing toward your standing goal]\nGoal: fix tests',
+        message: '↻ Continuing toward goal (1/20): no auxiliary client configured',
+        verdict: 'continue',
+        reason: 'no auxiliary client configured',
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield {
+          run_id: 'run-1',
+          done: true,
+          status: 'completed',
+          output: 'done',
+          result: { final_response: 'done' },
+        }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello', session_id: 'session-1' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      dequeueNextQueuedRun,
+    )
+
+    expect(bridge.command).not.toHaveBeenCalled()
+    expect(state.queue).toEqual([])
+    expect(dequeueNextQueuedRun).not.toHaveBeenCalled()
+    expect(emit).toHaveBeenCalledWith('session.command', expect.objectContaining({
+      command: 'goal',
+      action: 'judge_unavailable',
+      message: 'Goal judge is not configured; automatic goal continuation was skipped. The goal remains active, but Hermes cannot mark it done automatically.',
     }))
   })
 
@@ -229,6 +365,133 @@ describe('bridge run final context usage', () => {
     }))
   })
 
+  it('persists pending tool marker text before a bridge run completes', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const persistedContent: string[] = []
+    flushBridgePendingToDbMock.mockImplementation((targetState: any) => {
+      persistedContent.push(targetState.bridgePendingAssistantContent || '')
+      targetState.bridgePendingAssistantContent = ''
+    })
+    ensureOpenBridgeAssistantMessageMock.mockImplementation((targetState: any, sessionId: string, runMarker: string) => {
+      let message = [...targetState.messages].reverse().find((m: any) => m.runMarker === runMarker && m.role === 'assistant' && m.finish_reason == null)
+      if (!message) {
+        message = {
+          id: targetState.messages.length + 1,
+          session_id: sessionId,
+          runMarker,
+          role: 'assistant',
+          content: '',
+          timestamp: Math.floor(Date.now() / 1000),
+        }
+        targetState.messages.push(message)
+      }
+      return message
+    })
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield { run_id: 'run-1', done: false, status: 'running', delta: 'Text [Call', events: [] }
+        yield { run_id: 'run-1', done: true, status: 'completed', output: '', events: [] }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello', session_id: 'session-1' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(persistedContent).toContain('Text [Call')
+    expect(emit).toHaveBeenCalledWith('message.delta', expect.objectContaining({
+      delta: 'Text ',
+      output: 'Text ',
+    }))
+    expect(emit).toHaveBeenCalledWith('message.delta', expect.objectContaining({
+      delta: '[Call',
+      output: 'Text [Call',
+    }))
+    expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({
+      output: 'Text [Call',
+    }))
+  })
+
+  it('persists the visible plan command instead of the expanded skill prompt', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield { run_id: 'run-1', done: true, status: 'completed', output: 'planned' }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      {
+        input: '[IMPORTANT: expanded plan skill prompt]',
+        display_input: '/plan build the feature',
+        display_role: 'command',
+        storage_message: '/plan build the feature',
+        session_id: 'session-1',
+      },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(state.messages.find((message: any) => message.role === 'command')).toEqual(expect.objectContaining({
+      role: 'command',
+      content: '/plan build the feature',
+    }))
+    expect(addMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'command',
+      content: '/plan build the feature',
+    }))
+    expect(addMessageMock).not.toHaveBeenCalledWith(expect.objectContaining({
+      role: 'user',
+      content: '[IMPORTANT: expanded plan skill prompt]',
+    }))
+    expect(bridge.chat).toHaveBeenCalledWith(
+      'session-1',
+      '[IMPORTANT: expanded plan skill prompt]',
+      expect.any(Array),
+      expect.any(String),
+      'default',
+      expect.objectContaining({ storage_message: '/plan build the feature' }),
+    )
+  })
+
   it('refreshes full context tokens when a bridge run fails', async () => {
     const emit = vi.fn()
     const nsp = makeNamespace(emit)
@@ -270,6 +533,58 @@ describe('bridge run final context usage', () => {
       inputTokens: 11,
       outputTokens: 7,
       contextTokens: 54321,
+    }))
+  })
+
+  it('emits bridge lifecycle status events so retries are visible', async () => {
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({
+        token_count: 12345,
+        message_count: 2,
+        tool_count: 4,
+        system_prompt_chars: 13,
+      }),
+      streamOutput: vi.fn(async function* () {
+        yield {
+          run_id: 'run-1',
+          done: false,
+          status: 'running',
+          events: [
+            { event: 'status', kind: 'lifecycle', text: 'Retrying in 3.0s (attempt 1/3)...' },
+          ],
+        }
+        yield { run_id: 'run-1', done: true, status: 'completed', output: 'done' }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    await handleBridgeRun(
+      nsp,
+      socket,
+      { input: 'hello', session_id: 'session-1' },
+      'default',
+      sessionMap,
+      bridge,
+      false,
+      vi.fn(),
+      vi.fn(),
+    )
+
+    expect(replaceStateMock).toHaveBeenCalledWith(sessionMap, 'session-1', 'agent.event', expect.objectContaining({
+      event: 'agent.event',
+      kind: 'lifecycle',
+      text: 'Retrying in 3.0s (attempt 1/3)...',
+    }))
+    expect(emit).toHaveBeenCalledWith('agent.event', expect.objectContaining({
+      event: 'agent.event',
+      kind: 'lifecycle',
+      text: 'Retrying in 3.0s (attempt 1/3)...',
     }))
   })
 })
