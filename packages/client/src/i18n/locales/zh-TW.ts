@@ -37,6 +37,35 @@ export default {
     passwordLoginConfigured: '密碼登入已啟用（{username}）',
   },
 
+  // 用戶管理
+  users: {
+    title: '帳戶管理',
+    description: '創建用戶、分配角色，並控制普通管理員可以訪問哪些設定。',
+    create: '創建用戶',
+    edit: '編輯用戶',
+    username: '用戶名',
+    role: '角色',
+    statusLabel: '狀態',
+    profiles: '可訪問的設定',
+    profilesPlaceholder: '選擇可訪問的設定',
+    allProfiles: '所有設定',
+    noProfiles: '未分配設定',
+    lastLogin: '上次登入',
+    newPasswordOptional: '新密碼（留空保持不變）',
+    loadFailed: '載入用戶失敗',
+    deleteConfirm: '確定刪除此用戶嗎？',
+    enable: '啟用',
+    disable: '停用',
+    roles: {
+      superAdmin: '超級管理員',
+      admin: '管理員',
+    },
+    status: {
+      active: '已啟用',
+      disabled: '已停用',
+    },
+  },
+
   // 通用
   common: {
     loading: '載入中...',
@@ -677,6 +706,7 @@ export default {
     tabs: {
       display: '顯示',
       account: '帳號',
+      users: '帳戶管理',
       agent: '代理',
       memory: '記憶',
       session: '工作階段',

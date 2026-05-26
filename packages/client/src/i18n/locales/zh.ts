@@ -37,6 +37,35 @@ export default {
     passwordLoginConfigured: '密码登录已启用（{username}）',
   },
 
+  // 用户管理
+  users: {
+    title: '账户管理',
+    description: '创建用户、分配角色，并控制普通管理员可以访问哪些配置。',
+    create: '创建用户',
+    edit: '编辑用户',
+    username: '用户名',
+    role: '角色',
+    statusLabel: '状态',
+    profiles: '可访问的配置',
+    profilesPlaceholder: '选择可访问的配置',
+    allProfiles: '所有配置',
+    noProfiles: '未分配配置',
+    lastLogin: '上次登录',
+    newPasswordOptional: '新密码（留空保持不变）',
+    loadFailed: '加载用户失败',
+    deleteConfirm: '确定删除此用户吗？',
+    enable: '启用',
+    disable: '禁用',
+    roles: {
+      superAdmin: '超级管理员',
+      admin: '管理员',
+    },
+    status: {
+      active: '已启用',
+      disabled: '已禁用',
+    },
+  },
+
   // 通用
   common: {
     loading: '加载中...',
@@ -679,6 +708,7 @@ export default {
     tabs: {
       display: '显示',
       account: '账户',
+      users: '账户管理',
       agent: '代理',
       memory: '记忆',
       session: '会话',
