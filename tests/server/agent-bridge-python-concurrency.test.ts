@@ -453,6 +453,52 @@ assert "compress-temp" not in broker._session_worker_key
 `)
   })
 
+  it('namespaces profile worker endpoints by broker endpoint', () => {
+    runPython(String.raw`
+${harness}
+
+prod_endpoint = bridge._worker_endpoint("default", "ipc:///tmp/hermes-agent-bridge.sock")
+preview_endpoint = bridge._worker_endpoint("default", "ipc:///tmp/hermes-web-ui-preview/agent-bridge.sock")
+assert prod_endpoint != preview_endpoint
+assert prod_endpoint == bridge._worker_endpoint("default", "ipc:///tmp/hermes-agent-bridge.sock")
+
+prod_broker = bridge.BridgeBroker("ipc:///tmp/hermes-agent-bridge.sock")
+preview_broker = bridge.BridgeBroker("ipc:///tmp/hermes-web-ui-preview/agent-bridge.sock")
+prod_worker = prod_broker._worker_for_profile("default")
+preview_worker = preview_broker._worker_for_profile("default")
+assert prod_worker.endpoint != preview_worker.endpoint
+`)
+  })
+
+  it('allows worker transport to be selected with environment variables', () => {
+    runPython(String.raw`
+${harness}
+
+os.environ.pop("HERMES_AGENT_BRIDGE_WORKER_TRANSPORT", None)
+os.environ.pop("HERMES_AGENT_BRIDGE_WORKER_PORT_BASE", None)
+
+default_endpoint = bridge._worker_endpoint("default", "ipc:///tmp/hermes-agent-bridge.sock")
+if os.name == "nt":
+    assert default_endpoint.startswith("tcp://127.0.0.1:")
+else:
+    assert default_endpoint.startswith("ipc://")
+
+os.environ["HERMES_AGENT_BRIDGE_WORKER_TRANSPORT"] = "tcp"
+os.environ["HERMES_AGENT_BRIDGE_WORKER_PORT_BASE"] = "19650"
+tcp_endpoint = bridge._worker_endpoint("default", "ipc:///tmp/hermes-agent-bridge.sock")
+assert tcp_endpoint.startswith("tcp://127.0.0.1:")
+assert int(tcp_endpoint.rsplit(":", 1)[1]) >= 19650
+assert int(tcp_endpoint.rsplit(":", 1)[1]) < 20650
+
+os.environ["HERMES_AGENT_BRIDGE_WORKER_TRANSPORT"] = "ipc"
+ipc_endpoint = bridge._worker_endpoint("default", "ipc:///tmp/hermes-agent-bridge.sock")
+assert ipc_endpoint.startswith("ipc://")
+
+os.environ.pop("HERMES_AGENT_BRIDGE_WORKER_TRANSPORT", None)
+os.environ.pop("HERMES_AGENT_BRIDGE_WORKER_PORT_BASE", None)
+`)
+  })
+
   it('restores approval env and clears handlers when a run fails', () => {
     runPython(String.raw`
 ${harness}
