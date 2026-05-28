@@ -32,13 +32,9 @@ export interface Message {
   toolArgs?: string
   toolResult?: string
   toolStatus?: 'running' | 'done' | 'error'
-  toolDuration?: number  // 工具执行时长（秒）
+  toolDuration?: number
   isStreaming?: boolean
   attachments?: Attachment[]
-  // 思考/推理文本。两条来源：
-  //   1) 历史消息：来自 HermesMessage.reasoning 字段
-  //   2) 流式：由 reasoning.delta / thinking.delta / reasoning.available 事件累加
-  // 不含 <think> 包裹标签；内容自身可以为多段纯文本。
   reasoning?: string
   queued?: boolean
   systemType?: 'command' | 'error'
@@ -58,6 +54,7 @@ export interface PendingApproval {
 
 export interface Session {
   id: string
+  profile?: string
   title: string
   source?: string
   messages: Message[]
@@ -66,11 +63,25 @@ export interface Session {
   model?: string
   provider?: string
   messageCount?: number
+  messageTotal?: number
+  loadedMessageCount?: number
+  hasMoreBefore?: boolean
+  isLoadingOlderMessages?: boolean
   inputTokens?: number
   outputTokens?: number
+  contextTokens?: number
   endedAt?: number | null
   lastActiveAt?: number
   workspace?: string | null
+}
+
+interface CompressionState {
+  compressing: boolean
+  messageCount: number
+  beforeTokens: number
+  afterTokens: number
+  compressed: boolean | null
+  error?: string
 }
 
 function uid(): string {
@@ -101,18 +112,15 @@ async function buildContentBlocks(
 ): Promise<ContentBlock[]> {
   const blocks: ContentBlock[] = []
 
-  // Add text block if content is not empty
   if (content.trim()) {
     blocks.push({ type: 'text', text: content.trim() })
   }
 
-  // Add attachment blocks using uploaded file paths
   if (attachments && attachments.length > 0 && uploadedFiles) {
     for (let i = 0; i < uploadedFiles.length; i++) {
       const uploaded = uploadedFiles[i]
       const attachment = attachments[i]
 
-      // Check if it's an image
       if (attachment?.type.startsWith('image/')) {
         blocks.push({
           type: 'image',
@@ -121,7 +129,6 @@ async function buildContentBlocks(
           media_type: attachment.type,
         })
       } else {
-        // Other files
         blocks.push({
           type: 'file',
           name: uploaded.name,
@@ -136,15 +143,13 @@ async function buildContentBlocks(
 }
 
 function mapHermesMessages(msgs: HermesMessage[]): Message[] {
-  // Filter out assistant messages with empty content
   const filteredMsgs = msgs.filter(m => {
     if (m.role === 'assistant') {
-      return m.content && m.content.trim() !== ''
+      return (m.tool_calls?.length || 0) > 0 || (m.content && m.content.trim() !== '')
     }
     return true
   })
 
-  // Build lookups from assistant messages with tool_calls
   const toolNameMap = new Map<string, string>()
   const toolArgsMap = new Map<string, string>()
   for (const msg of filteredMsgs) {
@@ -160,16 +165,14 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
 
   const result: Message[] = []
   for (const msg of filteredMsgs) {
-    // Skip assistant messages that only contain tool_calls (no meaningful content)
     if (msg.role === 'assistant' && msg.tool_calls?.length && !msg.content?.trim()) {
-      // Emit a tool.started message for each tool call
       for (const tc of msg.tool_calls) {
         result.push({
           id: String(msg.id) + '_' + tc.id,
           role: 'tool',
           content: '',
           timestamp: Math.round(msg.timestamp * 1000),
-          toolName: tc.function?.name || 'tool',
+          toolName: tc.function?.name || undefined,
           toolCallId: tc.id,
           toolArgs: tc.function?.arguments || undefined,
           toolStatus: 'done',
@@ -178,12 +181,10 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
       continue
     }
 
-    // Tool result messages
     if (msg.role === 'tool') {
       const tcId = msg.tool_call_id || ''
-      const toolName = msg.tool_name || toolNameMap.get(tcId) || 'tool'
+      const toolName = msg.tool_name || toolNameMap.get(tcId) || undefined
       const toolArgs = toolArgsMap.get(tcId) || undefined
-      // Extract a short preview from the content
       let preview = ''
       if (msg.content) {
         try {
@@ -193,7 +194,6 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
           preview = msg.content.slice(0, 80)
         }
       }
-      // Find and remove the matching placeholder from tool_calls above
       const placeholderIdx = result.findIndex(
         m => m.role === 'tool' && m.toolName === toolName && !m.toolResult && m.id.includes('_' + tcId)
       )
@@ -215,7 +215,6 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
       continue
     }
 
-    // Normal user/assistant/command messages
     result.push({
       id: String(msg.id),
       role: msg.role,
@@ -231,14 +230,20 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
 function mapHermesSession(s: SessionSummary): Session {
   return {
     id: s.id,
+    profile: s.profile || 'default',
     title: s.title || '',
     source: s.source || undefined,
     messages: [],
     createdAt: Math.round(s.started_at * 1000),
     updatedAt: Math.round((s.last_active || s.ended_at || s.started_at) * 1000),
     model: s.model,
-    provider: (s as any).billing_provider || '',
+    provider: s.provider || (s as any).billing_provider || '',
     messageCount: s.message_count,
+    messageTotal: s.message_count,
+    loadedMessageCount: 0,
+    hasMoreBefore: false,
+    inputTokens: s.input_tokens,
+    outputTokens: s.output_tokens,
     endedAt: s.ended_at != null ? Math.round(s.ended_at * 1000) : null,
     lastActiveAt: s.last_active != null ? Math.round(s.last_active * 1000) : undefined,
     workspace: s.workspace || null,
@@ -248,9 +253,6 @@ function mapHermesSession(s: SessionSummary): Session {
 const STORAGE_KEY_PREFIX = 'hermes_active_session_'
 const LEGACY_STORAGE_KEY = 'hermes_active_session'
 
-// 获取当前 profile 名称，用于隔离缓存。
-// 从 profiles store 的 activeProfileName（同步 localStorage）读取，
-// 避免异步加载导致 chat store 初始化时拿到 null。
 function getProfileName(): string {
   try {
     return useProfilesStore().activeProfileName || 'default'
@@ -270,7 +272,6 @@ function isQuotaExceededError(error: unknown): boolean {
 
 function recoverStorageQuota() {
   try {
-    // 清理所有会话相关的旧缓存（已完全废弃）
     const prefixes = [
       'hermes_sessions_cache_v1_',
       'hermes_session_msgs_v1_',
@@ -320,19 +321,14 @@ function removeItem(key: string) {
   }
 }
 
-// Strip the circular `file: File` reference from attachments before caching —
-// File objects don't serialize and we only need name/type/size/url for display.
-
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<string | null>(null)
   const focusMessageId = ref<string | null>(null)
   const streamStates = ref<Map<string, { abort: () => void }>>(new Map())
-  /** sessionId → server-reported isWorking status */
   const serverWorking = ref<Set<string>>(new Set())
-  /** sessionId → queued message count */
+  const sessionProfileFilter = ref<string | null>(null)
   const queueLengths = ref<Map<string, number>>(new Map())
-  /** sessionId → queued user messages not yet visible in the transcript */
   const queuedUserMessages = ref<Map<string, Message[]>>(new Map())
   const pendingApprovals = ref<Map<string, PendingApproval>>(new Map())
   const activePendingApproval = computed(() => {
@@ -340,12 +336,12 @@ export const useChatStore = defineStore('chat', () => {
     return sid ? pendingApprovals.value.get(sid) || null : null
   })
 
-  // 自动播放语音开关
   const autoPlaySpeechEnabled = ref(false)
 
   function setAutoPlaySpeech(enabled: boolean) {
     autoPlaySpeechEnabled.value = enabled
   }
+
   const isStreaming = computed(() => {
     const sid = activeSessionId.value
     if (sid == null) return false
@@ -356,18 +352,18 @@ export const useChatStore = defineStore('chat', () => {
   const isLoadingMessages = ref(false)
   const isRunActive = computed(() => isStreaming.value)
 
-  // Compression state
-  const compressionState = ref<{
-    compressing: boolean
-    messageCount: number
-    beforeTokens: number
-    afterTokens: number
-    compressed: boolean | null
-    error?: string
-  } | null>(null)
+  const compressionStates = ref<Map<string, CompressionState>>(new Map())
+  const compressionState = computed<CompressionState | null>(() => {
+    const sid = activeSessionId.value
+    return sid ? compressionStates.value.get(sid) || null : null
+  })
 
-  function setCompressionState(state: typeof compressionState.value) {
-    compressionState.value = state
+  function setCompressionState(sessionId: string | null | undefined, state: CompressionState | null) {
+    if (!sessionId) return
+    const next = new Map(compressionStates.value)
+    if (state) next.set(sessionId, state)
+    else next.delete(sessionId)
+    compressionStates.value = next
   }
 
   const abortState = ref<{
@@ -388,13 +384,11 @@ export const useChatStore = defineStore('chat', () => {
     return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
   }
 
-  async function loadSessions() {
+  async function loadSessions(profile?: string | null, preferredSessionId?: string | null) {
     isLoadingSessions.value = true
     try {
-      const list = await fetchSessions()
+      const list = await fetchSessions(undefined, undefined, profile || undefined)
       const fresh = list.map(mapHermesSession)
-      // Preserve already-loaded messages for sessions that are still present,
-      // so we don't blow away the active session's messages on refresh.
       const msgsByIdBefore = new Map(sessions.value.map(s => [s.id, s.messages]))
       for (const s of fresh) {
         const prev = msgsByIdBefore.get(s.id)
@@ -402,8 +396,7 @@ export const useChatStore = defineStore('chat', () => {
       }
       sessions.value = fresh
 
-      // Restore last active session, fallback to most recent
-      const savedId = activeSessionId.value
+      const savedId = preferredSessionId || activeSessionId.value
       const targetId = savedId && sessions.value.some(s => s.id === savedId)
         ? savedId
         : sessions.value[0]?.id
@@ -418,7 +411,6 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // Re-pull active session from server. Used on tab-visible events.
   async function refreshActiveSession(): Promise<boolean> {
     const sid = activeSessionId.value
     if (!sid) return false
@@ -436,7 +428,6 @@ export const useChatStore = defineStore('chat', () => {
       return false
     }
   }
-
 
   function createSession(): Session {
     const session: Session = {
@@ -489,7 +480,6 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingMessages.value = true
 
     try {
-      // Load messages via Socket.IO resume (server loads from DB if not in memory)
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('resume timeout')), 15_000)
         resumeSession(sessionId, (data) => {
@@ -521,12 +511,11 @@ export const useChatStore = defineStore('chat', () => {
               activeSession.value!.title = t + (firstUser.content.length > 40 ? '...' : '')
             }
           }
-          // Process replayed events (compression state etc.)
           if (data.events?.length) {
             for (const evt of data.events) {
               const e = evt.data as any
               if (e.event === 'compression.started') {
-                setCompressionState({
+                setCompressionState(sessionId, {
                   compressing: true,
                   messageCount: e.message_count || 0,
                   beforeTokens: e.token_count || 0,
@@ -534,7 +523,7 @@ export const useChatStore = defineStore('chat', () => {
                   compressed: null,
                 })
               } else if (e.event === 'compression.completed') {
-                setCompressionState({
+                setCompressionState(sessionId, {
                   compressing: false,
                   messageCount: e.totalMessages || 0,
                   beforeTokens: e.beforeTokens || 0,
@@ -601,13 +590,11 @@ export const useChatStore = defineStore('chat', () => {
       isLoadingMessages.value = false
     }
 
-    // Resume in-flight run event listeners if needed
     resumeServerWorkingRun(sessionId)
   }
 
   function newChat() {
     const session = createSession()
-    // Inherit current global model
     const appStore = useAppStore()
     session.model = appStore.selectedModel || undefined
     switchSession(session.id)
@@ -617,7 +604,6 @@ export const useChatStore = defineStore('chat', () => {
     if (!activeSession.value) return
     activeSession.value.model = modelId
     activeSession.value.provider = provider || ''
-    // If provider changed, update global config too (Hermes requires it)
     if (provider) {
       const { useAppStore } = await import('./app')
       await useAppStore().switchModel(modelId, provider)
@@ -650,10 +636,8 @@ export const useChatStore = defineStore('chat', () => {
   function addOrUpdateSession(session: Session) {
     const existingIndex = sessions.value.findIndex(s => s.id === session.id)
     if (existingIndex !== -1) {
-      // Update existing session
       sessions.value[existingIndex] = session
     } else {
-      // Add new session
       sessions.value.push(session)
     }
   }
@@ -842,7 +826,6 @@ export const useChatStore = defineStore('chat', () => {
       switchSession(session.id)
     }
 
-    // Capture session ID at send time — all callbacks use this, not activeSessionId
     const sid = activeSessionId.value!
     const isBridgeSlashCommand = activeSession.value?.source === 'cli' && content.trim().startsWith('/')
     const isBridgeCompressCommand = isBridgeSlashCommand && /^\/compress(?:\s|$)/i.test(content.trim())
@@ -865,14 +848,10 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     try {
-
-      // Build input in Anthropic format
       let input: string | ContentBlock[]
       if (attachments && attachments.length > 0) {
-        // Has attachments: upload first, then build content blocks
         const uploaded = await uploadFiles(attachments)
 
-        // Update attachment URLs on the user message for display
         const token = getApiKey()
         const urlMap = new Map(uploaded.map(f => {
           const base = `/api/hermes/download?path=${encodeURIComponent(f.path)}&name=${encodeURIComponent(f.name)}`
@@ -894,10 +873,8 @@ export const useChatStore = defineStore('chat', () => {
           }
         }
 
-        // Build content blocks with uploaded file paths
         input = await buildContentBlocks(content, attachments, uploaded)
       } else {
-        // No attachments: use plain text format
         input = content.trim()
       }
 
@@ -915,18 +892,11 @@ export const useChatStore = defineStore('chat', () => {
         enqueueUserMessage(sid, userMsg)
       }
 
-      // Helper to clean up this session's stream state
       const cleanup = () => {
         streamStates.value.delete(sid)
         serverWorking.value.delete(sid)
       }
 
-      // Per-active-run flags used to detect silently-swallowed errors at run.completed.
-      // hermes-agent occasionally emits run.completed with empty output and no
-      // usage when the agent layer caught an upstream error (e.g. invalid API
-      // key). We need to distinguish: (a) run with assistant text produced,
-      // (b) run with only tool activity, (c) run with truly nothing visible.
-      // Reset on every run.started because one handler may span multiple queued runs.
       let runProducedAssistantText = false
       let runHadToolActivity = false
       let activeAssistantMessageId: string | null = null
@@ -945,10 +915,8 @@ export const useChatStore = defineStore('chat', () => {
         activeAssistantMessageId = null
       }
 
-      // Send run via Socket.IO and listen to streamed events — all closures capture `sid`
       const ctrl = startRunViaSocket(
         runPayload,
-        // onEvent
         (evt: RunEvent) => {
           switch (evt.event) {
             case 'run.started':
@@ -975,7 +943,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'compression.started': {
-              setCompressionState({
+              setCompressionState(sid, {
                 compressing: true,
                 messageCount: (evt as any).message_count || 0,
                 beforeTokens: (evt as any).token_count || 0,
@@ -986,7 +954,7 @@ export const useChatStore = defineStore('chat', () => {
             }
 
             case 'compression.completed': {
-              setCompressionState({
+              setCompressionState(sid, {
                 compressing: false,
                 messageCount: (evt as any).totalMessages || 0,
                 beforeTokens: (evt as any).beforeTokens || 0,
@@ -994,10 +962,9 @@ export const useChatStore = defineStore('chat', () => {
                 compressed: (evt as any).compressed ?? false,
                 error: (evt as any).error,
               })
-              // Auto-clear after 5s
               setTimeout(() => {
                 if (compressionState.value && !compressionState.value.compressing) {
-                  setCompressionState(null)
+                  setCompressionState(sid, null)
                 }
               }, 5000)
               break
@@ -1055,24 +1022,15 @@ export const useChatStore = defineStore('chat', () => {
                 activeAssistantMessageId = newId
                 noteReasoningStart(newId)
               }
-
               break
             }
 
             case 'reasoning.available': {
-              // Upstream run_agent.py fires reasoning.available with
-              // `assistant_message.content[:500]` as the preview — i.e.,
-              // the main answer, not real reasoning. Ignore the payload
-              // and only use this event as a "thinking ended" signal so
-              // the duration counter stops.
               const msgs = getSessionMsgs(sid)
               const last = msgs[msgs.length - 1]
               if (last?.role === 'assistant' && last.isStreaming) {
-                // 只有当 reasoning.delta 事件曾经启动过计时，才标记结束；
-                // 否则（上游未转发 delta，只发这一次 available）不显示时长。
                 noteReasoningEnd(last.id)
               }
-
               break
             }
 
@@ -1086,7 +1044,6 @@ export const useChatStore = defineStore('chat', () => {
                 const prev = last.content
                 const next = prev + (evt.delta || '')
                 noteThinkingDelta(last.id, prev, next)
-                // 若之前有 reasoning 累积，则 content 到达即视为推理结束。
                 if (last.reasoning) noteReasoningEnd(last.id)
                 last.content = next
               } else {
@@ -1102,7 +1059,6 @@ export const useChatStore = defineStore('chat', () => {
                 })
                 activeAssistantMessageId = newId
               }
-
               break
             }
 
@@ -1140,7 +1096,6 @@ export const useChatStore = defineStore('chat', () => {
                 toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : undefined,
                 toolStatus: 'running',
               })
-
               break
             }
 
@@ -1153,7 +1108,6 @@ export const useChatStore = defineStore('chat', () => {
                 : msgs.filter(m => m.role === 'tool' && m.toolStatus === 'running')
               if (toolMsgs.length > 0) {
                 const last = toolMsgs[toolMsgs.length - 1]
-                // Check if tool errored
                 const hasError = (evt as any).error === true
                 const duration = (evt as any).duration
                 updateMessage(sid, last.id, {
@@ -1162,7 +1116,6 @@ export const useChatStore = defineStore('chat', () => {
                   toolResult: typeof (evt as any).output === 'string' ? (evt as any).output : undefined,
                 })
               }
-
               break
             }
 
@@ -1184,7 +1137,6 @@ export const useChatStore = defineStore('chat', () => {
               if (lastMsg?.isStreaming) {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
               }
-              // Server-computed usage (local countTokens, snapshot-aware)
               if ((evt as any).inputTokens != null) {
                 const target = sessions.value.find(s => s.id === sid)
                 if (target) {
@@ -1192,16 +1144,8 @@ export const useChatStore = defineStore('chat', () => {
                   target.outputTokens = (evt as any).outputTokens
                 }
               }
-              // Belt-and-suspenders: some providers may deliver the final
-              // assistant text only via run.completed.output (no message.delta
-              // stream). If we never produced assistant text but the gateway
-              // reports a non-empty output, fall back to rendering it as a
-              // single assistant message so the user actually sees the reply.
-
-              // Check if backend provided parsed content (from stringified array format)
               let finalOutputTrimmed = ''
               if ((evt as any).parsed_content !== undefined) {
-                // Backend has parsed stringified array format, update last assistant message
                 const msgs = getSessionMsgs(sid)
                 const lastAssistant = activeAssistantMessageId
                   ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -1218,7 +1162,6 @@ export const useChatStore = defineStore('chat', () => {
                   finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
                 }
               } else {
-                // Fallback to output field (legacy behavior)
                 const finalOutput =
                   typeof evt.output === 'string' ? evt.output : ''
                 finalOutputTrimmed = finalOutput.trim()
@@ -1232,15 +1175,6 @@ export const useChatStore = defineStore('chat', () => {
                   runProducedAssistantText = true
                 }
               }
-              // Workaround for upstream hermes-agent bug: when the agent
-              // layer silently swallows an error (e.g. invalid API key,
-              // unsupported model), the gateway still emits run.completed
-              // with an empty output. Without surfacing it here the chat UI
-              // looks frozen / "succeeded with no reply". Detect by the
-              // combination of: no assistant text AND no tool activity AND
-              // empty final output. Usage being zero is a *supporting*
-              // signal but not required, since some providers/local models
-              // legitimately omit usage.
               const swallowedError =
                 !runProducedAssistantText &&
                 !runHadToolActivity &&
@@ -1256,12 +1190,10 @@ export const useChatStore = defineStore('chat', () => {
                 playCompletionBellIfEnabled()
               }
 
-              // 自动播放语音
               if (autoPlaySpeechEnabled.value) {
                 const msgs = getSessionMsgs(sid)
                 const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
                 if (lastAssistant?.content) {
-                  // 延迟一小会儿再播放，确保 UI 更新完成
                   setTimeout(() => {
                     playMessageSpeech(lastAssistant.id, lastAssistant.content)
                   }, 300)
@@ -1318,7 +1250,6 @@ export const useChatStore = defineStore('chat', () => {
             }
           }
         },
-        // onDone
         () => {
           const msgs = getSessionMsgs(sid)
           const last = msgs[msgs.length - 1]
@@ -1328,7 +1259,6 @@ export const useChatStore = defineStore('chat', () => {
           cleanup()
           updateSessionTitle(sid)
         },
-        // onError
         (err) => {
           console.warn('Socket.IO run stream error:', err.message)
           const msgs = getSessionMsgs(sid)
@@ -1362,15 +1292,8 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  /**
-   * Resume an in-flight run after page refresh.
-   * Emits 'resume' to join the session room on the server,
-   * then sets up event listeners to receive ongoing events.
-   */
   function resumeServerWorkingRun(sid: string) {
-    // Don't register duplicate listeners if already streaming
     if (streamStates.value.has(sid)) return
-    // Only set up listeners if the server reported an active run during resume.
     if (!serverWorking.value.has(sid)) return
 
     let closed = false
@@ -1383,7 +1306,6 @@ export const useChatStore = defineStore('chat', () => {
       closed = true
       streamStates.value.delete(sid)
       serverWorking.value.delete(sid)
-      // Unregister from global session handlers
       unregisterSessionHandlers(sid)
     }
 
@@ -1401,10 +1323,8 @@ export const useChatStore = defineStore('chat', () => {
       activeAssistantMessageId = null
     }
 
-    // Shared event handler — filters by session_id tag
     function handleEvent(evt: RunEvent) {
       if (closed) return
-      // Filter events for this session (server tags all events with session_id)
       if (evt.session_id && evt.session_id !== sid) return
       switch (evt.event) {
         case 'run.queued': {
@@ -1431,7 +1351,7 @@ export const useChatStore = defineStore('chat', () => {
           break
 
         case 'compression.started': {
-          setCompressionState({
+          setCompressionState(sid, {
             compressing: true,
             messageCount: (evt as any).message_count || 0,
             beforeTokens: (evt as any).token_count || 0,
@@ -1442,7 +1362,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'compression.completed': {
-          setCompressionState({
+          setCompressionState(sid, {
             compressing: false,
             messageCount: (evt as any).totalMessages || 0,
             beforeTokens: (evt as any).beforeTokens || 0,
@@ -1452,7 +1372,7 @@ export const useChatStore = defineStore('chat', () => {
           })
           setTimeout(() => {
             if (compressionState.value && !compressionState.value.compressing) {
-              setCompressionState(null)
+              setCompressionState(sid, null)
             }
           }, 5000)
           break
@@ -1510,7 +1430,6 @@ export const useChatStore = defineStore('chat', () => {
             activeAssistantMessageId = newId
             noteReasoningStart(newId)
           }
-
           break
         }
 
@@ -1520,7 +1439,6 @@ export const useChatStore = defineStore('chat', () => {
           if (last?.role === 'assistant' && last.isStreaming) {
             noteReasoningEnd(last.id)
           }
-
           break
         }
 
@@ -1549,7 +1467,6 @@ export const useChatStore = defineStore('chat', () => {
             })
             activeAssistantMessageId = newId
           }
-
           break
         }
 
@@ -1587,7 +1504,6 @@ export const useChatStore = defineStore('chat', () => {
             toolArgs: typeof (evt as any).arguments === 'string' ? (evt as any).arguments : undefined,
             toolStatus: 'running',
           })
-
           break
         }
 
@@ -1606,7 +1522,6 @@ export const useChatStore = defineStore('chat', () => {
               toolResult: typeof (evt as any).output === 'string' ? (evt as any).output : undefined,
             })
           }
-
           break
         }
 
@@ -1634,7 +1549,6 @@ export const useChatStore = defineStore('chat', () => {
           if (lastMsg?.isStreaming) {
             updateMessage(sid, lastMsg.id, { isStreaming: false })
           }
-          // Server-computed usage (local countTokens, snapshot-aware)
           if ((evt as any).inputTokens != null) {
             const target = sessions.value.find(s => s.id === sid)
             if (target) {
@@ -1642,10 +1556,8 @@ export const useChatStore = defineStore('chat', () => {
               target.outputTokens = (evt as any).outputTokens
             }
           }
-          // Check if backend provided parsed content (from stringified array format)
           let finalOutputTrimmed = ''
           if ((evt as any).parsed_content !== undefined) {
-            // Backend has parsed stringified array format, update last assistant message
             const msgs = getSessionMsgs(sid)
             const lastAssistant = activeAssistantMessageId
               ? msgs.find(m => m.id === activeAssistantMessageId)
@@ -1662,7 +1574,6 @@ export const useChatStore = defineStore('chat', () => {
               finalOutputTrimmed = ((evt as any).parsed_content || '').trim()
             }
           } else {
-            // Fallback to output field (legacy behavior)
             const finalOutput = typeof evt.output === 'string' ? evt.output : ''
             finalOutputTrimmed = finalOutput.trim()
             if (!runProducedAssistantText && finalOutputTrimmed !== '') {
@@ -1679,14 +1590,13 @@ export const useChatStore = defineStore('chat', () => {
             addMessage(sid, {
               id: uid(),
               role: 'system',
-              content: 'Error: Agent returned no output. The model call may have failed (e.g. invalid API key, model not supported by provider, or context exceeded). Check the hermes-agent logs for details.',
+              content: 'Error: Agent returned no output.',
               timestamp: Date.now(),
             })
           } else {
             playCompletionBellIfEnabled()
           }
 
-          // Auto-play speech for every completed assistant message
           if (autoPlaySpeechEnabled.value) {
             const msgs = getSessionMsgs(sid)
             const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
@@ -1701,7 +1611,6 @@ export const useChatStore = defineStore('chat', () => {
             cleanup()
             activeAssistantMessageId = null
           } else {
-            // More runs pending — reset for next run but don't cleanup
             activeAssistantMessageId = null
           }
           updateSessionTitle(sid)
@@ -1753,7 +1662,6 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
 
-    // Register handlers in global session map
     registerSessionHandlers(sid, {
       onMessageDelta: (evt) => handleEvent(evt),
       onReasoningDelta: (evt) => handleEvent(evt),
@@ -1773,11 +1681,6 @@ export const useChatStore = defineStore('chat', () => {
       onRunQueued: (evt) => handleEvent(evt),
     })
 
-    // No need to emit resume here — switchSession already did it.
-    // Server already joined room and replayed events.
-    // Just set up handlers for ongoing streaming events.
-
-    // Mark as streaming so UI shows the indicator and can still abort after refresh.
     streamStates.value.set(sid, {
       abort: () => {
         getChatRunSocket()?.emit('abort', { session_id: sid })
@@ -1808,13 +1711,11 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // Tab visibility: re-sync when returning to foreground
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && activeSessionId.value && !isStreaming.value) {
         const sid = activeSessionId.value
         if (sid && !streamStates.value.has(sid)) {
-          // Re-load messages via resume (server loads from DB)
           resumeSession(sid, (data) => {
             if (data.isWorking) {
               serverWorking.value.add(sid)
@@ -1836,8 +1737,6 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
-  // Transient observation of <think> boundaries during active streaming.
-  // Not persisted; cleared on session switch. See spec §5.3.
   const thinkingObservation = new Map<string, { startedAt?: number; endedAt?: number }>()
 
   function getThinkingObservation(messageId: string) {
@@ -1857,7 +1756,6 @@ export const useChatStore = defineStore('chat', () => {
     thinkingObservation.set(messageId, existing)
   }
 
-  /** 第一次见到某条消息的 reasoning 文本时，标记 startedAt。 */
   function noteReasoningStart(messageId: string) {
     const existing = thinkingObservation.get(messageId) || {}
     if (existing.startedAt === undefined) {
@@ -1866,7 +1764,6 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  /** 内容首次到达（视为推理结束）或显式收到 reasoning.available 时，标记 endedAt。 */
   function noteReasoningEnd(messageId: string) {
     const existing = thinkingObservation.get(messageId)
     if (!existing || existing.startedAt === undefined) return
@@ -1888,14 +1785,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function clearThinkingObservationFor(_sessionId: string) {
-    // messageId 与 sessionId 的关联未单独持有；方案是切会话时一律清空。
-    // 这符合 spec 定义：observation 是"当前会话范围内"的 transient 状态。
     thinkingObservation.clear()
   }
 
-  // 播放消息语音
   function playMessageSpeech(messageId: string, content: string) {
-    // 触发自定义事件，让 MessageItem 组件处理播放
     const event = new CustomEvent('auto-play-speech', {
       detail: { messageId, content }
     })
@@ -1922,6 +1815,7 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingSessions,
     sessionsLoaded,
     isLoadingMessages,
+    sessionProfileFilter,
 
     newChat,
     newCliSession,

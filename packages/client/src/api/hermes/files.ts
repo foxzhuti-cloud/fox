@@ -3,6 +3,7 @@ import { request, getActiveProfileName, getApiKey, getBaseUrlValue } from '../cl
 export interface FileEntry {
   name: string
   path: string
+  absolutePath?: string
   isDir: boolean
   size: number
   modTime: string
@@ -11,13 +12,14 @@ export interface FileEntry {
 export interface FileStat {
   name: string
   path: string
+  absolutePath?: string
   isDir: boolean
   size: number
   modTime: string
   permissions?: string
 }
 
-export async function listFiles(path: string = ''): Promise<{ entries: FileEntry[]; path: string }> {
+export async function listFiles(path: string = ''): Promise<{ entries: FileEntry[]; path: string; absolutePath?: string }> {
   const params = new URLSearchParams()
   if (path) params.set('path', path)
   const query = params.toString()
@@ -77,13 +79,11 @@ export async function uploadFiles(targetDir: string, files: File[]): Promise<{ n
   if (targetDir) params.set('path', targetDir)
   const query = params.toString()
   const url = `${base}/api/hermes/files/upload${query ? `?${query}` : ''}`
-
   const headers: Record<string, string> = {}
   const token = getApiKey()
   if (token) headers['Authorization'] = `Bearer ${token}`
   const profileName = getActiveProfileName()
   if (profileName) headers['X-Hermes-Profile'] = profileName
-
   const res = await fetch(url, { method: 'POST', headers, body: formData })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))

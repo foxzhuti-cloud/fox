@@ -1,11 +1,6 @@
 import type { HermesMessage } from '@/api/hermes/sessions'
 import type { ConversationMessage } from '@/api/hermes/conversations'
 
-function escapeMarkdown(text: string): string {
-  return text
-    .replace(new RegExp('\\\\([*_\x60{}\\[\\]()#+-.!|~<>])', 'g'), '\\$1')
-}
-
 function formatTimestamp(ts: number): string {
   const d = new Date(ts)
   return d.toLocaleString()
