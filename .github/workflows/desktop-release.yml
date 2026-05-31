@@ -21,6 +21,9 @@ jobs:
   desktop:
     name: Desktop (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     strategy:
       fail-fast: false
       matrix:
@@ -123,7 +126,7 @@ jobs:
           MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           MAC_APPLE_ID: ${{ secrets.APPLE_ID }}
           MAC_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.MAC_APPLE_APP_SPECIFIC_PASSWORD }}
-          MAC_APPLE_TEAM_ID: ${{ secrets.MAC_APPLE_TEAM_ID }}
+          MAC_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           write_env() {
             local name="$1"
