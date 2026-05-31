@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to attach artifacts to (e.g. v0.6.5)"
-        required: true
+        description: "Existing release tag to attach artifacts to (e.g. v0.6.5, leave empty for main)"
+        required: false
+        default: ""
   release:
     types: [published]
 
@@ -41,7 +42,7 @@ jobs:
               packages/desktop/release/*.dmg
               packages/desktop/release/*.dmg.blockmap
           - label: Windows x64
-            runner: windows-latest
+            runner: windows-2022
             target_os: win32
             target_arch: x64
             electron_target: "--win nsis --x64"
@@ -93,6 +94,8 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
 
       - name: Install web UI dependencies
         run: |
@@ -122,7 +125,7 @@ jobs:
           MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           MAC_APPLE_ID: ${{ secrets.APPLE_ID }}
           MAC_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.MAC_APPLE_APP_SPECIFIC_PASSWORD }}
-          MAC_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MAC_APPLE_TEAM_ID: ${{ secrets.MAC_APPLE_TEAM_ID }}
         run: |
           write_env() {
             local name="$1"
@@ -158,7 +161,9 @@ jobs:
 
       - name: Build desktop artifact
         shell: bash
-        run: npm --prefix packages/desktop run dist -- ${{ matrix.electron_target }} ${MAC_BUILD_EXTRA_ARGS:-} --publish never
+        run: |
+          echo "Building for ${{ matrix.target_os }}-${{ matrix.target_arch }}"
+          npm --prefix packages/desktop run dist -- ${{ matrix.electron_target }} ${MAC_BUILD_EXTRA_ARGS:-} --publish never
 
       - name: Upload artifacts to release
         uses: softprops/action-gh-release@v2
