@@ -1,5 +1,16 @@
+<script lang="ts">
+type HistorySessionScrollSnapshot = {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  wasNearBottom: boolean;
+}
+
+const historySessionScrollPositions = new Map<string, HistorySessionScrollSnapshot>();
+</script>
+
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from "vue";
+import { ref, computed, nextTick, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import VirtualMessageList from "./VirtualMessageList.vue";
 import MessageItem from "./MessageItem.vue";
@@ -14,9 +25,9 @@ const props = defineProps<{
 const chatStore = useChatStore();
 const { t } = useI18n();
 const listRef = ref<InstanceType<typeof VirtualMessageList> | null>(null);
-
-// Use provided session or fall back to chatStore's active session
-const activeSession = computed(() => props.session || chatStore.activeSession);
+const pendingInitialScrollSessionId = ref<string | null>(null);
+const activeSession = computed(() => props.session || null);
+const listInstanceKey = computed(() => activeSession.value?.id ? `history-${activeSession.value.id}` : "history-empty");
 
 const displayMessages = computed(() =>
   (activeSession.value?.messages || []).filter((m) => {
@@ -44,6 +55,35 @@ function scrollToAnchor(messageId: string, anchorId: string) {
   listRef.value?.scrollToAnchor(messageId, anchorId);
 }
 
+function saveSessionScrollPosition(sessionId: string | null | undefined) {
+  if (!sessionId) return;
+  const snapshot = listRef.value?.captureViewportPosition() ?? null;
+  if (snapshot) historySessionScrollPositions.set(sessionId, snapshot);
+}
+
+function applyInitialSessionScroll(sessionId: string) {
+  if (activeSession.value?.id !== sessionId) return;
+  if (chatStore.focusMessageId) {
+    pendingInitialScrollSessionId.value = null;
+    scrollToMessage(chatStore.focusMessageId);
+    return;
+  }
+
+  const snapshot = historySessionScrollPositions.get(sessionId);
+  if (snapshot) {
+    pendingInitialScrollSessionId.value = null;
+    if (snapshot.wasNearBottom) {
+      scrollToBottom();
+    } else {
+      listRef.value?.restoreViewportPosition(snapshot);
+    }
+    return;
+  }
+
+  scrollToBottom();
+  if ((activeSession.value?.messages.length || 0) > 0) pendingInitialScrollSessionId.value = null;
+}
+
 async function handleTopReach() {
   const session = activeSession.value;
   if (!session?.hasMoreBefore || session.isLoadingOlderMessages || !props.loadOlder) return;
@@ -54,16 +94,14 @@ async function handleTopReach() {
   listRef.value?.restoreScrollPosition(snapshot);
 }
 
-// Scroll to bottom on session switch
 watch(
   () => activeSession.value?.id,
-  (id) => {
+  async (id, previousId) => {
+    saveSessionScrollPosition(previousId);
     if (!id) return;
-    if (chatStore.focusMessageId) {
-      scrollToMessage(chatStore.focusMessageId);
-      return;
-    }
-    scrollToBottom();
+    pendingInitialScrollSessionId.value = id;
+    await nextTick();
+    applyInitialSessionScroll(id);
   },
   { immediate: true },
 );
@@ -80,6 +118,7 @@ watch(
 watch(
   () => (activeSession.value?.messages || [])[((activeSession.value?.messages || []).length - 1)]?.content,
   (content) => {
+    if (pendingInitialScrollSessionId.value === activeSession.value?.id) return;
     if (!content) return
     if (!isNearBottom()) return;
     scrollToBottom();
@@ -90,10 +129,20 @@ watch(
   () => (activeSession.value?.messages || []).length,
   (length) => {
     if (length === 0) return
+    const id = activeSession.value?.id
+    if (id && pendingInitialScrollSessionId.value === id) {
+      applyInitialSessionScroll(id);
+      return;
+    }
     if (!isNearBottom()) return;
     scrollToBottom();
   },
+  { flush: "post" },
 );
+
+onBeforeUnmount(() => {
+  saveSessionScrollPosition(activeSession.value?.id);
+});
 
 defineExpose({
   scrollToBottom,
@@ -104,6 +153,7 @@ defineExpose({
 
 <template>
   <VirtualMessageList
+    :key="listInstanceKey"
     ref="listRef"
     :messages="displayMessages"
     @top-reach="handleTopReach"

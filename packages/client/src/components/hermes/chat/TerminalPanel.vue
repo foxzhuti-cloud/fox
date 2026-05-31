@@ -12,7 +12,7 @@ import type { ITheme } from "@xterm/xterm";
 const { t } = useI18n();
 const message = useMessage();
 
-const props = defineProps<{ visible?: boolean }>();
+const props = defineProps<{ visible?: boolean; initialCommand?: string }>();
 
 // ─── Terminal themes ────────────────────────────────────────────
 
@@ -103,6 +103,10 @@ let activeFitAddon: FitAddon | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 3;
+let touchScrollLastY: number | null = null;
+let touchScrollRemainder = 0;
+const TOUCH_SCROLL_LINE_PX = 18;
+const initialCommandSent = ref(false);
 
 // ─── Computed ──────────────────────────────────────────────────
 
@@ -221,6 +225,7 @@ function handleControl(msg: any) {
         exited: false,
       });
       switchSession(msg.id);
+      runInitialCommand();
       break;
 
     case "exited": {
@@ -246,6 +251,15 @@ function handleControl(msg: any) {
 
 function createSession() {
   send({ type: "create" });
+}
+
+function runInitialCommand() {
+  const command = props.initialCommand?.trim();
+  if (!command || initialCommandSent.value) return;
+  initialCommandSent.value = true;
+  setTimeout(() => {
+    send(`${command}\r`);
+  }, 100);
 }
 
 function getOrCreateTerm(id: string): { term: Terminal; fitAddon: FitAddon } {
@@ -355,6 +369,35 @@ function sendResize() {
       rows: activeTerm.rows,
     });
   } catch {}
+}
+
+function handleTerminalTouchStart(event: TouchEvent) {
+  if (event.touches.length !== 1) {
+    touchScrollLastY = null;
+    touchScrollRemainder = 0;
+    return;
+  }
+  touchScrollLastY = event.touches[0].clientY;
+  touchScrollRemainder = 0;
+}
+
+function handleTerminalTouchMove(event: TouchEvent) {
+  if (!activeTerm || event.touches.length !== 1 || touchScrollLastY === null) return;
+  const nextY = event.touches[0].clientY;
+  touchScrollRemainder += touchScrollLastY - nextY;
+  touchScrollLastY = nextY;
+
+  const lines = Math.trunc(touchScrollRemainder / TOUCH_SCROLL_LINE_PX);
+  if (lines === 0) return;
+
+  activeTerm.scrollLines(lines);
+  touchScrollRemainder -= lines * TOUCH_SCROLL_LINE_PX;
+  event.preventDefault();
+}
+
+function handleTerminalTouchEnd() {
+  touchScrollLastY = null;
+  touchScrollRemainder = 0;
 }
 
 // ─── Theme ───────────────────────────────────────────────────────
@@ -518,7 +561,15 @@ onUnmounted(() => {
         </div>
       </header>
       <div class="terminal-container">
-        <div ref="terminalRef" class="terminal-xterm" :style="{ backgroundColor: terminalBg }" />
+        <div
+          ref="terminalRef"
+          class="terminal-xterm"
+          :style="{ backgroundColor: terminalBg }"
+          @touchstart="handleTerminalTouchStart"
+          @touchmove="handleTerminalTouchMove"
+          @touchend="handleTerminalTouchEnd"
+          @touchcancel="handleTerminalTouchEnd"
+        />
       </div>
     </div>
   </div>
@@ -530,8 +581,11 @@ onUnmounted(() => {
 .terminal-panel-drawer {
   display: flex;
   height: 100%;
+  width: 100%;
   min-height: 0;
+  min-width: 0;
   position: relative;
+  overflow: hidden;
 }
 
 .sidebar-overlay {
@@ -724,9 +778,11 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 12px 16px;
   border-bottom: 1px solid $border-color;
   flex-shrink: 0;
+  min-width: 0;
 }
 
 .header-session-title {
@@ -743,6 +799,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  min-width: 0;
 }
 
 .theme-select {
@@ -760,12 +817,15 @@ onUnmounted(() => {
   margin: 8px;
   overflow: hidden;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
 
 .terminal-xterm {
   flex: 1;
+  min-height: 0;
+  min-width: 0;
   border-radius: $radius-md;
   overflow: hidden;
   border: 1px solid $border-color;
@@ -797,6 +857,64 @@ onUnmounted(() => {
 
   :deep(.xterm-scrollable-element::-webkit-scrollbar) {
     display: none !important;
+  }
+}
+
+@media (max-width: $breakpoint-mobile) {
+  .terminal-panel-drawer {
+    height: 100%;
+    max-height: 100%;
+  }
+
+  .terminal-main {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .terminal-header {
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .header-session-title {
+    display: none;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  .theme-select {
+    width: 96px;
+  }
+
+  .terminal-container {
+    margin: 6px;
+    margin-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .terminal-xterm {
+    border-radius: $radius-sm;
+
+    :deep(.xterm) {
+      padding: 6px;
+    }
+
+    :deep(.xterm-viewport),
+    :deep(.xterm-scrollable-element) {
+      touch-action: pan-y;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      scrollbar-width: thin !important;
+    }
+
+    :deep(.xterm-viewport::-webkit-scrollbar),
+    :deep(.xterm-scrollable-element::-webkit-scrollbar) {
+      display: block !important;
+      width: 6px !important;
+    }
   }
 }
 </style>
