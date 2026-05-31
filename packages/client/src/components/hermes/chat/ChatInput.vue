@@ -8,10 +8,16 @@ import { setModelContext } from '@/api/hermes/model-context'
 import { NButton, NTooltip, NSwitch, NModal, NInputNumber, useMessage } from 'naive-ui'
 import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 
 const chatStore = useChatStore()
+const appStore = useAppStore()
+const profilesStore = useProfilesStore()
 const { t } = useI18n()
 const message = useMessage()
+const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
+const DRAFT_STORAGE_KEY = 'hermes_chat_input_drafts_v1'
+type DraftMap = Record<string, string>
 const inputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const commandDropdownRef = ref<HTMLDivElement>()
@@ -192,6 +198,9 @@ function selectBridgeCommand(command: { name: string; args: string; insertText?:
 
 const contextLength = ref(256000)
 const FALLBACK_CONTEXT = 256000
+let contextLengthLoadedKey = ''
+let contextLengthRequestKey = ''
+let contextLengthRequest: Promise<void> | null = null
 
 // Context length editing
 const showContextEditModal = ref(false)
@@ -211,9 +220,8 @@ async function saveContextLimit() {
 
   isSavingContextLimit.value = true
   try {
-    const appStore = useAppStore()
-    const provider = appStore.selectedProvider || ''
-    const model = appStore.selectedModel || ''
+    const provider = chatStore.activeSession?.provider || appStore.selectedProvider || ''
+    const model = chatStore.activeSession?.model || appStore.selectedModel || ''
 
     if (!provider || !model) {
       message.error(t('chat.contextEditFailed'))
@@ -222,6 +230,7 @@ async function saveContextLimit() {
 
     await setModelContext(provider, model, editingContextLimit.value)
     contextLength.value = editingContextLimit.value
+    contextLengthLoadedKey = currentContextLengthKey()
     showContextEditModal.value = false
     message.success(t('chat.contextEditSuccess'))
   } catch (err: any) {
@@ -231,20 +240,65 @@ async function saveContextLimit() {
   }
 }
 
-async function loadContextLength() {
-  try {
-    const profile = useProfilesStore().activeProfileName || undefined
-    contextLength.value = await fetchContextLength(profile)
-  } catch {
-    contextLength.value = FALLBACK_CONTEXT
+function currentContextLengthParams() {
+  const activeSession = chatStore.activeSession
+  return {
+    profile: activeSession?.profile || profilesStore.activeProfileName || undefined,
+    provider: activeSession?.provider || undefined,
+    model: activeSession?.model || undefined,
   }
 }
 
+function currentContextLengthKey() {
+  const params = currentContextLengthParams()
+  return `${params.profile || ''}|${params.provider || ''}|${params.model || ''}`
+}
+
+async function loadContextLength() {
+  const key = currentContextLengthKey()
+  if (key === contextLengthLoadedKey) return
+  if (key === contextLengthRequestKey && contextLengthRequest) return contextLengthRequest
+
+  contextLengthRequestKey = key
+  contextLengthRequest = (async () => {
+    const params = currentContextLengthParams()
+    try {
+      const value = await fetchContextLength(params.profile, params.provider, params.model)
+      if (currentContextLengthKey() !== key) return
+      contextLength.value = value
+      contextLengthLoadedKey = key
+    } catch {
+      if (currentContextLengthKey() !== key) return
+      contextLength.value = FALLBACK_CONTEXT
+      contextLengthLoadedKey = key
+    } finally {
+      if (contextLengthRequestKey === key) {
+        contextLengthRequest = null
+        contextLengthRequestKey = ''
+      }
+    }
+  })()
+  return contextLengthRequest
+}
+
 onMounted(loadContextLength)
-watch(() => useProfilesStore().activeProfileName, loadContextLength)
-watch(() => useAppStore().selectedModel, loadContextLength)
+watch(
+  () => [
+    profilesStore.activeProfileName,
+    appStore.selectedProvider,
+    appStore.selectedModel,
+    chatStore.activeSession?.id,
+    chatStore.activeSession?.profile,
+    chatStore.activeSession?.provider,
+    chatStore.activeSession?.model,
+  ],
+  loadContextLength,
+  { flush: 'post' },
+)
 
 const totalTokens = computed(() => {
+  const context = chatStore.activeSession?.contextTokens
+  if (typeof context === 'number' && Number.isFinite(context) && context > 0) return context
   const input = chatStore.activeSession?.inputTokens ?? 0
   const output = chatStore.activeSession?.outputTokens ?? 0
   return input + output
@@ -483,6 +537,24 @@ function isImage(type: string): boolean {
         />
       </div>
 
+      <NTooltip trigger="hover">
+        <template #trigger>
+          <NButton
+            quaternary
+            size="tiny"
+            class="tool-trace-toggle"
+            :class="{ active: toolTraceVisible }"
+            :aria-label="toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls')"
+            @click="toggleToolTraceVisible"
+          >
+            <svg class="tool-trace-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.7 6.3a4.5 4.5 0 0 0-5.8 5.8L3.5 17.5a2.1 2.1 0 0 0 3 3l5.4-5.4a4.5 4.5 0 0 0 5.8-5.8l-3 3-3-3 3-3z"/>
+            </svg>
+          </NButton>
+        </template>
+        {{ toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls') }}
+      </NTooltip>
+
       <span v-if="totalTokens > 0" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
         {{ formatTokens(totalTokens) }} /
         <NTooltip trigger="hover">
@@ -667,19 +739,64 @@ function isImage(type: string): boolean {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 8px;
+  padding: 0 0 0 8px;
   border-left: 1px solid $border-light;
   margin-left: 4px;
 
   .switch-label {
     display: flex;
     align-items: center;
-    color: $text-muted;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: #999999;
     font-size: 12px;
 
     svg {
-      opacity: 0.7;
+      opacity: 1;
     }
+  }
+
+  :deep(.n-switch),
+  :deep(.n-switch__rail) {
+    margin-right: 0;
+  }
+}
+
+.tool-trace-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #999999;
+  width: 24px;
+  min-width: 24px;
+  height: 22px;
+  margin-left: -4px;
+  padding: 0;
+  background: transparent !important;
+  opacity: 1;
+
+  :deep(.n-button__state-border),
+  :deep(.n-button__border),
+  :deep(.n-button__ripple) {
+    display: none;
+  }
+
+  .tool-trace-icon {
+    display: block;
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+  }
+
+  &.active {
+    color: #999999;
+    opacity: 1;
+  }
+
+  &:hover {
+    color: #999999;
+    opacity: 1;
   }
 }
 
