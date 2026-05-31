@@ -88,8 +88,43 @@ function startResize(e: MouseEvent) {
 // 自动播放语音开关
 const autoPlaySpeech = ref(false)
 
+function readDraftMap(): DraftMap {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DRAFT_STORAGE_KEY) || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function getActiveDraftSessionId() {
+  return chatStore.activeSessionId || chatStore.activeSession?.id || ''
+}
+
+function loadDraftForActiveSession() {
+  const sessionId = getActiveDraftSessionId()
+  inputText.value = sessionId ? readDraftMap()[sessionId] || '' : ''
+}
+
+function saveDraftForActiveSession(value: string) {
+  const sessionId = getActiveDraftSessionId()
+  if (!sessionId) return
+  const drafts = readDraftMap()
+  if (value) {
+    drafts[sessionId] = value
+  } else {
+    delete drafts[sessionId]
+  }
+  if (Object.keys(drafts).length > 0) {
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(drafts))
+  } else {
+    localStorage.removeItem(DRAFT_STORAGE_KEY)
+  }
+}
+
 // 从 localStorage 读取设置
 onMounted(() => {
+  loadDraftForActiveSession()
   const saved = localStorage.getItem('autoPlaySpeech')
   if (saved !== null) {
     autoPlaySpeech.value = saved === 'true'
@@ -103,6 +138,14 @@ watch(autoPlaySpeech, (value) => {
   localStorage.setItem('autoPlaySpeech', String(value))
   // 通知 chat store
   chatStore.setAutoPlaySpeech(value)
+})
+
+watch(inputText, (value) => {
+  saveDraftForActiveSession(value)
+})
+
+watch(() => chatStore.activeSession?.id, () => {
+  loadDraftForActiveSession()
 })
 
 const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
@@ -302,6 +345,7 @@ function handleSend() {
 
   chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
   inputText.value = ''
+  saveDraftForActiveSession('')
   attachments.value = []
   slashActive.value = false
 
