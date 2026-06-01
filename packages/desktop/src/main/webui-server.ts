@@ -15,6 +15,27 @@ const execFileAsync = promisify(execFile)
 let serverProc: ChildProcess | null = null
 let cachedToken: string | null = null
 
+function killProcessTree(proc: ChildProcess): void {
+  if (!proc.pid || proc.killed) return
+  if (process.platform === 'win32') {
+    try {
+      const killer = spawn('taskkill.exe', ['/PID', String(proc.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+      killer.once('error', () => undefined)
+      return
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    proc.kill('SIGKILL')
+  } catch {
+    /* ignore */
+  }
+}
+
 function envPositiveInt(name: string): number | undefined {
   const raw = process.env[name]
   if (!raw) return undefined
@@ -210,9 +231,6 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   const bundledPython = isWin
     ? join(pythonDir(), 'python.exe')
     : join(pythonDir(), 'bin', 'python3')
-  const bundledPythonNoWindow = isWin
-    ? join(pythonDir(), 'pythonw.exe')
-    : bundledPython
   const bridgePort = await getFreeTcpPort()
   const workerPortBase = await getFreeTcpPortInRange(20000, 59000)
   const loginShellPath = await getLoginShellPath()
@@ -232,8 +250,11 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     NODE_ENV: 'production',
     HERMES_DESKTOP: 'true',
     HERMES_BIN: hermesBin(),
+    // The bridge and its per-profile workers need working stdout/stderr for
+    // ready handshakes. Use python.exe on Windows and hide windows at the
+    // process creation layer instead of switching the bridge to pythonw.exe.
     HERMES_AGENT_BRIDGE_PYTHON: bundledPython,
-    HERMES_AGENT_CLI_PYTHON: existsSync(bundledPythonNoWindow) ? bundledPythonNoWindow : bundledPython,
+    HERMES_AGENT_CLI_PYTHON: bundledPython,
     HERMES_AGENT_ROOT: pythonDir(),
     // Force TCP loopback for the agent bridge. The default `ipc:///tmp/...`
     // unix socket is rejected on macOS in some EDR/sandbox setups (silent
@@ -312,7 +333,7 @@ export function stopWebUiServer(): Promise<void> {
     if (!serverProc || serverProc.killed) return resolve()
     const proc = serverProc
     const timer = setTimeout(() => {
-      try { proc.kill('SIGKILL') } catch { /* */ }
+      killProcessTree(proc)
       resolve()
     }, 3000)
     proc.once('exit', () => {
