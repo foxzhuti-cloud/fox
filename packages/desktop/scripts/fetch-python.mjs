@@ -49,7 +49,17 @@ mkdirSync(OUT_DIR, { recursive: true })
 const tarPath = resolve(tmpdir(), FILE)
 
 console.log(`→ Fetching ${URL}`)
-const curl = spawnSync('curl', ['-fL', '--retry', '3', '-o', tarPath, URL], { stdio: 'inherit' })
+const curl = spawnSync('curl', [
+  '-fL',
+  '--retry', '10',
+  '--retry-delay', '5',
+  '--retry-max-time', '600',
+  '--connect-timeout', '30',
+  '--max-time', '600',
+  '--speed-limit', '1',
+  '--speed-time', '30',
+  '-o', tarPath, URL
+], { stdio: 'inherit' })
 if (curl.status !== 0) {
   console.error('curl failed')
   process.exit(curl.status ?? 1)
