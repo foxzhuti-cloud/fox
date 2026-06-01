@@ -187,6 +187,14 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.label }}
+          path: ${{ matrix.artifact_files }}
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Upload artifacts to release
         uses: softprops/action-gh-release@v2
         if: steps.determine_ref.outputs.has_tag == 'true'
