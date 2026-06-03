@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/EKKOLearnAI/hermes-web-ui/releases/latest">下载 Hermes Studio 桌面版</a>
+  <a href="https://github.com/foxzhuti-cloud/fox/releases/latest">下载 Hermes Studio 桌面版</a>
   ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
