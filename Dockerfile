@@ -18,6 +18,7 @@ RUN ARCH=$(dpkg --print-architecture) \
     && echo "Downloading Node.js v${NODE_VERSION} for ${NODE_ARCH}" \
     && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.gz" \
        -o /tmp/node.tar.gz \
+       --retry 10 --retry-delay 5 --retry-max-time 600 \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
        /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
     && tar -xzf /tmp/node.tar.gz -C /usr/local --strip-components=1 \

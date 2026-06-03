@@ -111,6 +111,8 @@ jobs:
     name: Desktop (${{ needs.validate.outputs.label }})
     needs: validate
     runs-on: ${{ needs.validate.outputs.runner }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout repository
