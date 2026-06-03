@@ -10,6 +10,7 @@ import { useAppStore } from '@/stores/hermes/app'
 import { checkCopilotToken } from '@/api/hermes/copilot-auth'
 
 const { t } = useI18n()
+const message = useMessage()
 const modelsStore = useModelsStore()
 const appStore = useAppStore()
 const showModal = ref(false)
