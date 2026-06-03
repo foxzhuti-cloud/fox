@@ -308,9 +308,8 @@ async function bootstrap(source?: RuntimeDownloadSource) {
     const manifestOverride = !!process.env.HERMES_DESKTOP_RUNTIME_MANIFEST_URL?.trim()
     const forceUpdate = !!process.env.HERMES_DESKTOP_RUNTIME_FORCE_UPDATE
     const runtimeReady = isDesktopRuntimeReady()
-    const packagedRuntimeUpdate = app.isPackaged && runtimeReady && cachedRuntimeNeedsPackagedReleaseUpdate()
-    const shouldCheckRuntime = !runtimeReady || forceUpdate || runtimeUrlOverride || manifestOverride || packagedRuntimeUpdate
-    const runtimeSource = selectedSource || (packagedRuntimeUpdate ? 'cf' : undefined)
+    const shouldCheckRuntime = !runtimeReady || forceUpdate || runtimeUrlOverride || manifestOverride
+    const runtimeSource = selectedSource
 
     if (shouldCheckRuntime) {
       if (!runtimeSource && !runtimeUrlOverride && !manifestOverride) {
