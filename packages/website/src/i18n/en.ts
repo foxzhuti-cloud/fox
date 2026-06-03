@@ -1,6 +1,6 @@
 export default {
   brand: {
-    name: 'Hermes Web UI',
+    name: 'Hermes Studio',
     logoAlt: 'Hermes',
   },
   ui: {
@@ -104,14 +104,14 @@ export default {
   },
   install: {
     title: 'Quick Start',
-    desc: 'Download the desktop app or run Hermes Web UI yourself.',
+    desc: 'Download the desktop app or run Hermes Studio yourself.',
     desktop: {
       title: 'Desktop',
       download: 'Download',
       githubDownload: 'GitHub Download',
       cloudflareDownload: 'Cloudflare Download',
       allDownloads: 'View all release assets',
-      prereq: 'Desktop builds bundle the Web UI runtime.',
+      prereq: 'Desktop builds bundle the Hermes Studio runtime.',
       downloads: [
         {
           title: 'macOS Apple Silicon',
@@ -185,7 +185,7 @@ export default {
     },
     gettingStarted: {
       title: 'Getting Started',
-      intro: 'Hermes Web UI is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the Hermes Agent CLI and provides a beautiful web interface.',
+      intro: 'Hermes Studio is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the Hermes Agent CLI and provides a beautiful web interface.',
       install: {
         title: 'Installation',
         content: 'Install globally via npm. Node.js 23 or higher is required.',
@@ -201,7 +201,7 @@ export default {
     },
     configuration: {
       title: 'Configuration',
-      intro: 'Hermes Web UI can be configured via environment variables.',
+      intro: 'Hermes Studio can be configured via environment variables.',
       envVars: {
         title: 'Environment Variables',
         rows: [
@@ -225,7 +225,7 @@ export default {
     },
     features: {
       title: 'Features',
-      intro: 'Explore the core features of Hermes Web UI.',
+      intro: 'Explore the core features of Hermes Studio.',
       chat: {
         title: 'AI Chat',
         content: 'Real-time streaming chat powered by Server-Sent Events. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, file upload/download, and global search across all conversations (Ctrl+K).',

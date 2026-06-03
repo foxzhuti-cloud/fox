@@ -1,6 +1,6 @@
 export default {
   brand: {
-    name: 'Hermes Web UI',
+    name: 'Hermes Studio',
     logoAlt: 'Hermes',
   },
   ui: {
@@ -104,14 +104,14 @@ export default {
   },
   install: {
     title: '快速开始',
-    desc: '下载桌面应用，或自行运行 Hermes Web UI。',
+    desc: '下载桌面应用，或自行运行 Hermes Studio。',
     desktop: {
       title: '桌面版',
       download: '下载',
       githubDownload: 'GitHub 下载',
       cloudflareDownload: 'Cloudflare 下载',
       allDownloads: '查看全部发布文件',
-      prereq: '桌面版已内置 Web UI 运行时。',
+      prereq: '桌面版已内置 Hermes Studio 运行时。',
       downloads: [
         {
           title: 'macOS Apple Silicon',
@@ -185,7 +185,7 @@ export default {
     },
     gettingStarted: {
       title: '快速开始',
-      intro: 'Hermes Web UI 是一个自托管的 Web 仪表板，用于管理 AI 对话、平台通道、定时任务等。它封装了 Hermes Agent CLI 并提供美观的 Web 界面。',
+      intro: 'Hermes Studio 是一个自托管的 Web 仪表板，用于管理 AI 对话、平台通道、定时任务等。它封装了 Hermes Agent CLI 并提供美观的 Web 界面。',
       install: {
         title: '安装',
         content: '通过 npm 全局安装。需要 Node.js 23 或更高版本。',
@@ -201,7 +201,7 @@ export default {
     },
     configuration: {
       title: '配置说明',
-      intro: 'Hermes Web UI 可通过环境变量进行配置。',
+      intro: 'Hermes Studio 可通过环境变量进行配置。',
       envVars: {
         title: '环境变量',
         rows: [
@@ -225,7 +225,7 @@ export default {
     },
     features: {
       title: '功能详解',
-      intro: '探索 Hermes Web UI 的核心功能。',
+      intro: '探索 Hermes Studio 的核心功能。',
       chat: {
         title: 'AI 聊天',
         content: '基于 Server-Sent Events 的实时流式聊天。支持多会话管理、Markdown 渲染与语法高亮、工具调用检查、文件上传/下载以及全局搜索 (Ctrl+K)。',

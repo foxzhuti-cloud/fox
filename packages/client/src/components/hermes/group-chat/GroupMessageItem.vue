@@ -7,6 +7,7 @@ import type { ChatMessage, RoomAgent } from '@/api/hermes/group-chat'
 const props = defineProps<{
     message: ChatMessage
     agents: RoomAgent[]
+    members?: MemberInfo[]
     currentUserId?: string
 }>()
 
