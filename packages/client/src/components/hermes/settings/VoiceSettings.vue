@@ -31,59 +31,22 @@ const editingConnection = ref<VoiceApiConnection | null>(null)
 const sttRecorder = useMicRecorder({ maxDurationMs: 30_000 })
 const cardTestStates = ref<Record<string, VoiceApiCardTestState>>({})
 
-const providerOptions = [
-  { label: t('settings.voice.providerWebSpeech'), value: 'webspeech' },
-  { label: t('settings.voice.providerOpenai'), value: 'openai' },
-  { label: t('settings.voice.providerCustom'), value: 'custom' },
-  { label: t('settings.voice.providerEdge'), value: 'edge' },
-]
+const activeTtsDescription = computed(() => voiceApi.activeTtsConnection.value?.label || t('settings.voice.noneSelected'))
+const activeSttDescription = computed(() => voiceApi.activeSttConnection.value?.label || t('settings.voice.noneSelected'))
 
 onMounted(async () => {
   await voiceApi.refresh()
 })
 
-async function handleTest() {
-  const text = testText.value.trim()
-  if (!text) return
-  testPlaying.value = true
-  try {
-    if (vs.provider.value === 'webspeech') {
-      speech.stop(false)
-      speech.speakViaBrowser('__test__', text, {
-        voiceName: vs.webspeechVoice.value || undefined,
-      })
-    } else if (vs.provider.value === 'openai') {
-      if (!vs.openaiBaseUrl.value) {
-        console.warn('[VoiceSettings] OpenAI base URL empty')
-        return
-      }
-      await speech.openaiPlay('__test__', text, {
-        baseUrl: vs.openaiBaseUrl.value,
-        apiKey: vs.openaiApiKey.value || undefined,
-        model: vs.openaiModel.value,
-        voice: vs.openaiVoice.value,
-      })
-    } else if (vs.provider.value === 'custom') {
-      if (!vs.customUrl.value) {
-        console.warn('[VoiceSettings] Custom URL empty')
-        return
-      }
-      await speech.openaiPlay('__test__', text, {
-        baseUrl: vs.customUrl.value,
-        apiKey: vs.customApiKey.value || undefined,
-      })
-    } else if (vs.provider.value === 'edge') {
-      await speech.openaiPlay('__test__', text, {
-        baseUrl: '/api/tts/proxy',
-        voice: vs.edgeVoice.value,
-        rate: speedToEdgeRate(vs.edgeRate.value),
-        pitch: hzToEdgePitch(vs.edgePitchHz.value),
-      })
-    }
-  } catch (err) {
-    console.error('[VoiceSettings] Test failed:', err)
-  } finally {
-    testPlaying.value = false
+function openAddModal(kind: VoiceApiKind) {
+  addModalKind.value = kind
+  showAddModal.value = true
+}
+
+function setCardTestState(id: string, status: VoiceApiCardTestState['status'], messageText?: string) {
+  cardTestStates.value = {
+    ...cardTestStates.value,
+    [id]: { status, message: messageText },
   }
 }
 
@@ -287,12 +250,7 @@ async function handleCardTest(connection: VoiceApiConnection) {
         </div>
       </header>
 
-    </template>
-
-    <!-- ─── Test / Audition ─── -->
-    <div class="test-section">
-      <h4 class="test-title">{{ t('settings.voice.testTitle') }}</h4>
-      <div class="test-row">
+      <div class="test-copy-row">
         <NInput
           v-model:value="testText"
           size="small"

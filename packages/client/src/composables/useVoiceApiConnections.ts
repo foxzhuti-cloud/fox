@@ -18,7 +18,7 @@ import {
   type SttStoredSecretsInput,
   type SttStoredSettings,
 } from '@/api/hermes/stt-settings'
-import { useVoiceSettings } from '@/composables/useVoiceSettings'
+import { useVoiceSettings, type TtsProvider } from '@/composables/useVoiceSettings'
 import { useSttSettings } from '@/composables/useSttSettings'
 import { VOICE_API_PRESETS } from '@/constants/voiceApiPresets'
 import type { VoiceApiConnection, VoiceApiKind, VoiceApiProvider, VoiceApiSavePayload } from '@/types/voice-api'
@@ -63,7 +63,7 @@ export function useVoiceApiConnections() {
 
   function applyTtsConnectionToLegacyState(connection: VoiceApiConnection) {
     if (!isTtsProvider(connection.provider)) return
-    vs.setProvider(connection.provider)
+    vs.setProvider(connection.provider as TtsProvider)
     const settings = connection.settings
 
     if (connection.provider === 'edge') {

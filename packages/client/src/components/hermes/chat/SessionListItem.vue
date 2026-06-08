@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 import { NPopconfirm, NCheckbox } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { Session } from '@/stores/hermes/chat'
@@ -23,6 +23,16 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const sessionAgentLogo = computed<{ label: string; src: string }>(() => {
+  if (props.session.source === 'coding_agent') {
+    if (props.session.codingAgentId === 'codex' || props.session.agent === 'codex') {
+      return { label: 'Codex', src: '/coding-agents/codex-openai.png' }
+    }
+    return { label: 'Claude Code', src: '/coding-agents/claude-code.svg' }
+  }
+  return { label: 'Hermes', src: '/coding-agents/hermes.png' }
+})
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null
 const longPressTriggered = ref(false)

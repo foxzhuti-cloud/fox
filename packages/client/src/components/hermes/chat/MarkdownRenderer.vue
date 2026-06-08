@@ -63,6 +63,15 @@ const previewUrl = ref<string | null>(null)
 let renderGeneration = 0
 let unmounted = false
 
+const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov'])
+const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'])
+
+function hasExtension(path: string, extensions: Set<string>): boolean {
+  const clean = path.split('?')[0].split('#')[0]
+  const ext = clean.split('.').pop()?.toLowerCase()
+  return !!ext && extensions.has(ext)
+}
+
 const renderedHtml = computed(() => {
   let html = md.render(repairNestedMarkdownFences(props.content))
 

@@ -12,9 +12,7 @@ import { useChatStore } from "@/stores/hermes/chat";
 import { useSettingsStore } from "@/stores/hermes/settings";
 import {
   copyTextToClipboard,
-  extractUnifiedDiffPayload,
   handleCodeBlockCopyClick,
-  inferStructuredLanguage,
   renderHighlightedCodeBlock,
 } from "./highlight";
 import { useGlobalSpeech } from "@/composables/useSpeech";
@@ -300,16 +298,6 @@ function formatToolPayload(raw?: string): ToolPayload {
           : raw,
     };
   }
-
-  const language = inferStructuredLanguage(text);
-  return {
-    full: text,
-    display:
-      language === "diff" || text.length <= TOOL_PAYLOAD_DISPLAY_LIMIT
-        ? text
-        : text.slice(0, TOOL_PAYLOAD_DISPLAY_LIMIT) + "\n" + t("chat.truncated"),
-    language,
-  };
 }
 
 function renderToolPayload(content: string, language?: string): string {
@@ -351,8 +339,8 @@ const hasAttachments = computed(
   () => (props.message.attachments?.length ?? 0) > 0,
 );
 
-const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs));
-const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult, true));
+const toolArgsPayload = computed(() => formatToolPayload(props.message.toolArgs as string | undefined));
+const toolResultPayload = computed(() => formatToolPayload(props.message.toolResult as string | undefined));
 
 const hasToolDetails = computed(
   () => !!(toolArgsPayload.value.full || toolResultPayload.value.full),

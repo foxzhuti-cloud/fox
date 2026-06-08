@@ -21,6 +21,18 @@ export interface OpenaiTtsOptions {
   provider?: 'edge' | 'openai' | 'custom'
 }
 
+export interface MimoTtsOptions {
+  baseUrl?: string
+  model?: string
+  voice?: string
+  authMode?: 'api-key' | 'bearer' | 'both'
+  voiceMode?: 'preset' | 'voiceDesign' | 'voiceClone'
+  voiceDesignDesc?: string
+  voiceCloneDataUri?: string
+  voiceCloneFormat?: 'mp3' | 'wav'
+  stylePrompt?: string
+}
+
 export interface SpeechState {
   isPlaying: boolean
   isPaused: boolean
@@ -454,6 +466,26 @@ export function useSpeech() {
     }
   }
 
+  async function mimoPlay(
+    messageId: string,
+    content: string,
+    opts: MimoTtsOptions,
+  ) {
+    const text = extractReadableText(content)
+    if (!text) return
+
+    const token = ++playbackToken
+
+    await playUnifiedCustomTts(
+      messageId,
+      text,
+      'mimo',
+      opts as unknown as Record<string, unknown>,
+      token,
+      '[useSpeech] Mimo TTS audio playback error',
+    )
+  }
+
   // ─── Unified speak ──────────────────────────────────────────
 
   function speak(messageId: string, text: string, options: SpeechOptions = {}) {
@@ -597,6 +629,9 @@ export function useSpeech() {
     // OpenAI-compatible TTS
     openaiPlay,
     openaiToggle,
+
+    // Mimo TTS
+    mimoPlay,
 
     // Browser WebSpeech (直接调用避免 Rolldown 树摇)
     speakViaBrowser,
