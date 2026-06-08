@@ -5,11 +5,15 @@ import { useSessionBrowserPrefsStore } from "@/stores/hermes/session-browser-pre
 import { messagesToMarkdown, downloadMarkdown, openPdfPrint } from "@/utils/export-conversation";
 import {
   NButton,
+  NDrawer,
+  NDrawerContent,
   NDropdown,
   NInput,
   NModal,
   NTooltip,
   NPopconfirm,
+  NRadioButton,
+  NRadioGroup,
   useMessage,
 } from "naive-ui";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
@@ -253,9 +257,13 @@ async function copySessionId(id?: string) {
   }
 }
 
-function handleDeleteSession(id: string) {
+async function handleDeleteSession(id: string) {
+  const ok = await chatStore.deleteSession(id);
+  if (!ok) {
+    message.error(t("common.deleteFailed"));
+    return;
+  }
   sessionBrowserPrefsStore.removePinned(id);
-  chatStore.deleteSession(id);
   message.success(t("chat.sessionDeleted"));
 }
 

@@ -139,6 +139,10 @@ async function handleDrawerUpdated() {
   await Promise.all([kanbanStore.fetchTasks(), kanbanStore.fetchStats()])
 }
 
+function handleNavigateTask(taskId: string) {
+  selectedTaskId.value = taskId
+}
+
 async function handleApplyFilter() {
   await kanbanStore.fetchTasks()
 }
@@ -277,6 +281,7 @@ async function handleArchiveSelectedBoard() {
       :task-id="selectedTaskId"
       @close="handleDrawerClose"
       @updated="handleDrawerUpdated"
+      @navigate="handleNavigateTask"
     />
 
     <!-- Board management -->

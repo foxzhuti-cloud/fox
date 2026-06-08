@@ -74,6 +74,12 @@ function sanitize(data: VoiceSettingsData): VoiceSettingsData {
   if (data.edgeUrl && data.edgeUrl !== '') {
     data.edgeUrl = ''
   }
+  if (data.mimoAuthMode !== 'api-key' && data.mimoAuthMode !== 'bearer' && data.mimoAuthMode !== 'both') {
+    data.mimoAuthMode = DEFAULT.mimoAuthMode
+  }
+  if (data.mimoVoiceCloneFormat !== 'mp3' && data.mimoVoiceCloneFormat !== 'wav') {
+    data.mimoVoiceCloneFormat = DEFAULT.mimoVoiceCloneFormat
+  }
   return data
 }
 

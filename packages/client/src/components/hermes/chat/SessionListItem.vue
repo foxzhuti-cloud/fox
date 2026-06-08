@@ -96,6 +96,14 @@ onUnmounted(() => {
           {{ session.title }}
         </span>
       </span>
+      <span class="session-item-agent-row">
+        <img
+          class="session-item-agent-logo"
+          :src="sessionAgentLogo.src"
+          :alt="sessionAgentLogo.label"
+        >
+        <span class="session-item-agent-name">{{ sessionAgentLogo.label }}</span>
+      </span>
       <span class="session-item-meta">
         <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
         <span class="session-item-time">{{ formatTimestampMs(session.createdAt) }}</span>
