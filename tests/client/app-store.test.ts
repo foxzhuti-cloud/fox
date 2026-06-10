@@ -174,7 +174,6 @@ describe('App Store', () => {
     expect(store.connected).toBe(true)
     expect(store.serverVersion).toBe('0.5.17')
     expect(store.clientOutdated).toBe(true)
-    expect(store.updateAvailable).toBe(false)
   })
 
   it('does not mark the client stale when the served Web UI version matches this bundle', async () => {

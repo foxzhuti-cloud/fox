@@ -12,7 +12,6 @@ import { initLoginLimiter } from './services/login-limiter'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
 import { setupKanbanEventsWebSocket } from './routes/hermes/kanban-events'
-import { startVersionCheck } from './routes/health'
 import { registerRoutes } from './routes'
 import { setGroupChatServer } from './routes/hermes/group-chat'
 import { setChatRunServer } from './routes/hermes/chat-run'
@@ -317,7 +316,6 @@ export async function bootstrap() {
   })
 
   bindShutdown(servers, groupChatServer, chatRunServer, agentBridgeManager)
-  startVersionCheck()
 }
 
 bootstrap().catch((error) => {
