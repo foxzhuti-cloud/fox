@@ -46,7 +46,6 @@ vi.mock('@/api/hermes/system', () => ({
   removeCustomModel: vi.fn(),
   updateDefaultModel: vi.fn(),
   updateModelVisibility: vi.fn(),
-  triggerUpdate: vi.fn(),
   updateModelAlias: vi.fn(),
 }))
 

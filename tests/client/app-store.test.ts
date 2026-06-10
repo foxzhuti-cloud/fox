@@ -10,7 +10,6 @@ const mockSystemApi = vi.hoisted(() => ({
   updateDefaultModel: vi.fn(),
   updateModelAlias: vi.fn(),
   updateModelVisibility: vi.fn(),
-  triggerUpdate: vi.fn(),
 }))
 
 vi.mock('@/api/hermes/system', () => mockSystemApi)
@@ -191,19 +190,6 @@ describe('App Store', () => {
 
     expect(store.serverVersion).toBe('test')
     expect(store.clientOutdated).toBe(false)
-  })
-
-  it('clears the updating state and reports failure when self-update request fails', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    mockSystemApi.triggerUpdate.mockRejectedValue(new Error('install failed'))
-    const store = useAppStore()
-
-    const ok = await store.doUpdate()
-
-    expect(ok).toBe(false)
-    expect(store.updating).toBe(false)
-    expect(consoleError).toHaveBeenCalledWith('Failed to update Hermes Web UI:', expect.any(Error))
-    consoleError.mockRestore()
   })
 
   it('loads model aliases and resolves display names without changing canonical IDs', async () => {
