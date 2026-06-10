@@ -976,6 +976,9 @@ async function handleWorkspaceConfirm() {
   display: flex;
   height: 100%;
   position: relative;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .session-list {

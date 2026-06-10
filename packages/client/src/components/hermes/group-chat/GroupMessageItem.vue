@@ -104,6 +104,7 @@ const mentionNames = computed(() => props.agents.map(a => a.name).filter(Boolean
     flex-direction: column;
     min-width: 0;
     max-width: 85%;
+    box-sizing: border-box;
 }
 
 .msg-header {
@@ -139,8 +140,11 @@ const mentionNames = computed(() => props.agents.map(a => a.name).filter(Boolean
     color: $text-primary;
     border-radius: 10px;
     background-color: $msg-user-bg;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
     word-break: break-word;
-    overflow-wrap: break-word;
+    overflow-wrap: anywhere;
 
     :deep(.mention-highlight) {
         color: #409eff;

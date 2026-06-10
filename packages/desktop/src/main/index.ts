@@ -8,6 +8,8 @@ import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
 import {
   ensureDesktopRuntime,
   isDesktopRuntimeReady,
+  migrateLegacyDesktopRuntime,
+  writeActiveRuntimeVersion,
   type RuntimeDownloadSource,
   type RuntimeProgress,
 } from './runtime-manager'
@@ -72,6 +74,12 @@ function showMainWindow() {
 function quitApp() {
   isQuitting = true
   app.quit()
+}
+
+function hasQuitRequest(data: unknown): boolean {
+  return typeof data === 'object'
+    && data !== null
+    && (data as { quit?: unknown }).quit === true
 }
 
 function loginItemOptions() {
@@ -346,6 +354,8 @@ async function bootstrap(source?: RuntimeDownloadSource) {
 
   try {
     const selectedSource = source || envRuntimeDownloadSource()
+    const migration = migrateLegacyDesktopRuntime(updateSplash)
+    const migrationFailed = migration.status === 'failed'
     const runtimeUrlOverride = !!process.env.HERMES_DESKTOP_RUNTIME_URL?.trim()
     const manifestOverride = !!process.env.HERMES_DESKTOP_RUNTIME_MANIFEST_URL?.trim()
     const forceUpdate = !!process.env.HERMES_DESKTOP_RUNTIME_FORCE_UPDATE
@@ -359,7 +369,10 @@ async function bootstrap(source?: RuntimeDownloadSource) {
         isBootstrapping = false
         return
       }
-      await ensureDesktopRuntime(updateSplash, runtimeSource)
+      await ensureDesktopRuntime(updateSplash, runtimeSource, true)
+    }
+    if (isDesktopRuntimeReady()) {
+      writeActiveRuntimeVersion()
     }
   } catch (err) {
     console.error('Failed to prepare Hermes runtime:', err)
@@ -407,14 +420,14 @@ ipcMain.handle('hermes-desktop:retry-bootstrap', async (_event, source?: Runtime
 })
 
 function runDesktopApp() {
-  const gotLock = app.requestSingleInstanceLock()
+  const gotLock = app.requestSingleInstanceLock(QUIT_EXISTING ? { quit: true } : undefined)
   if (!gotLock) {
     app.quit()
     return
   }
 
-  app.on('second-instance', (_event, argv) => {
-    if (argv.includes('--quit')) {
+  app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
+    if (argv.includes('--quit') || hasQuitRequest(additionalData)) {
       quitApp()
       return
     }
@@ -433,7 +446,7 @@ function runDesktopApp() {
     // default is fine there.
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
     if (app.isPackaged) {
-      installHermesStudioCliShim().then(result => {
+      installHermesStudioCliShim({ runtimeVersion: desktopRuntimeVersion() }).then(result => {
         if (result.status === 'skipped') {
           console.warn(`[cli-shim] ${result.reason}: ${result.shimPath}`)
         }

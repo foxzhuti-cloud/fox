@@ -11,6 +11,7 @@ const COPILOT_PROVIDER = 'copilot'
 const FUN_CODEX_PROVIDER = 'fun-codex'
 const KIMI_CODING_PROVIDER = 'kimi-coding'
 const KIMI_CODING_CN_PROVIDER = 'kimi-coding-cn'
+const ALIBABA_CODING_PLAN_PROVIDER = 'alibaba-coding-plan'
 const MINIMAX_PROVIDER = 'minimax'
 const MINIMAX_CN_PROVIDER = 'minimax-cn'
 const NOUS_PROVIDER = 'nous'
@@ -25,6 +26,15 @@ function modelsForProvider(providerPresets: Array<{ value: string; models: strin
 }
 
 describe('provider presets', () => {
+  it('keeps every built-in provider preset registered in the env map', () => {
+    const missingMappings = SERVER_PROVIDER_PRESETS
+      .filter(candidate => candidate.builtin)
+      .map(candidate => candidate.value)
+      .filter(provider => !Object.prototype.hasOwnProperty.call(PROVIDER_ENV_MAP, provider))
+
+    expect(missingMappings).toEqual([])
+  })
+
   it('routes apikey.fun Codex through the Responses transport', () => {
     const preset = SERVER_PROVIDER_PRESETS.find((candidate) => candidate.value === FUN_CODEX_PROVIDER)
     expect(preset?.api_mode).toBe('codex_responses')
@@ -51,6 +61,10 @@ describe('provider presets', () => {
     expect(SERVER_PROVIDER_PRESETS.find(candidate => candidate.value === KIMI_CODING_CN_PROVIDER)?.base_url).toBe('https://api.kimi.cn/coding/v1')
     expect(SERVER_PROVIDER_PRESETS.find(candidate => candidate.value === KIMI_CODING_CN_PROVIDER)?.label).toBe('Kimi for Coding China')
     expect(SERVER_PROVIDER_PRESETS.find(candidate => candidate.value === 'moonshot')).toBeUndefined()
+  })
+
+  it('includes Qwen 3.7 Plus in the Alibaba Coding Plan fallback catalog', () => {
+    expect(modelsForProvider(SERVER_PROVIDER_PRESETS, ALIBABA_CODING_PLAN_PROVIDER)).toContain('qwen3.7-plus')
   })
 
   it('does not expose incomplete built-in provider presets', () => {

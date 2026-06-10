@@ -189,6 +189,19 @@ async function handleArchiveSelectedBoard() {
     boardActionLoading.value = false
   }
 }
+
+async function handleDispatch() {
+  boardActionLoading.value = true
+  try {
+    await kanbanStore.dispatch()
+    await kanbanStore.refreshAll()
+    message.success(t('kanban.message.dispatchNudged'))
+  } catch (err: any) {
+    message.error(err.message)
+  } finally {
+    boardActionLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -214,6 +227,9 @@ async function handleArchiveSelectedBoard() {
           @click="handleArchiveSelectedBoard"
         >
           {{ t('kanban.board.archive') }}
+        </NButton>
+        <NButton size="small" secondary :loading="boardActionLoading" @click="handleDispatch">
+          {{ t('kanban.action.dispatch') }}
         </NButton>
         <NSelect
           v-model:value="filterStatusValue"

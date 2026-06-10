@@ -1652,7 +1652,7 @@ class AgentPool:
             return
 
         after_count = self._session_db_message_count(session.session_id, profile)
-        if after_count is None or after_count > db_count_after_prepersist:
+        if after_count is None:
             return
 
         messages = result.get("messages")
@@ -1666,6 +1666,11 @@ class AgentPool:
         ]
         if not generated:
             return
+
+        already_persisted = max(0, after_count - db_count_after_prepersist)
+        if already_persisted >= len(generated):
+            return
+        generated = generated[already_persisted:]
 
         appended = 0
         for msg in generated:
@@ -1696,6 +1701,15 @@ class AgentPool:
                 flush=True,
             )
 
+    def _result_from_agent_messages_for_sync(self, session: AgentSession) -> dict[str, Any] | None:
+        for attr in ("messages", "_messages", "_session_messages"):
+            messages = getattr(session.agent, attr, None)
+            if isinstance(messages, list):
+                return {"messages": copy.deepcopy(messages)}
+        if isinstance(session.history, list) and session.history:
+            return {"messages": copy.deepcopy(session.history)}
+        return None
+
     def start_chat(
         self,
         session_id: str,
@@ -1708,6 +1722,7 @@ class AgentPool:
         model: str | None = None,
         provider: str | None = None,
         source: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> RunRecord:
         session = self.get_or_create(session_id, profile=profile, model=model, provider=provider)
         with session.lock:
@@ -1726,14 +1741,14 @@ class AgentPool:
 
         thread = threading.Thread(
             target=self._run_chat,
-            args=(session, record, message, storage_message, instructions, conversation_history, profile, force_compress, source),
+            args=(session, record, message, storage_message, instructions, conversation_history, profile, force_compress, source, reasoning_effort),
             daemon=True,
             name=f"hermes-bridge-run-{run_id[:8]}",
         )
         thread.start()
         return record
 
-    def _run_chat(self, session: AgentSession, record: RunRecord, message: Any, storage_message: Any | None = None, instructions: str | None = None, conversation_history: list[dict[str, Any]] | None = None, profile: str | None = None, force_compress: bool = False, source: str | None = None) -> None:
+    def _run_chat(self, session: AgentSession, record: RunRecord, message: Any, storage_message: Any | None = None, instructions: str | None = None, conversation_history: list[dict[str, Any]] | None = None, profile: str | None = None, force_compress: bool = False, source: str | None = None, reasoning_effort: str | None = None) -> None:
         with _profile_env(profile):
             _refresh_approval_allowlist()
             _install_execute_code_approval_memory_patch()
@@ -1757,6 +1772,9 @@ class AgentPool:
             approval_session_token = None
             registered_gateway_approval_session = None
             exec_ask_scope_entered = False
+            db_count_after_prepersist: int | None = None
+            result_for_tail_sync: dict[str, Any] | None = None
+            tail_synced = False
             try:
                 try:
                     self._enter_exec_ask_scope()
@@ -1798,11 +1816,33 @@ class AgentPool:
                     kwargs["system_message"] = instructions
                 if conversation_history is not None:
                     kwargs["conversation_history"] = conversation_history
-                result = session.agent.run_conversation(
-                    message,
-                    **kwargs,
-                )
+                # Local patch (reasoning-effort): per-run reasoning effort override (Web UI brain button).
+                # Mutates session.agent.reasoning_config in place — restored after run.
+                _saved_reasoning_config = None
+                _did_override_reasoning = False
+                if reasoning_effort:
+                    try:
+                        from hermes_constants import parse_reasoning_effort
+                        override_cfg = parse_reasoning_effort(str(reasoning_effort).strip())
+                        # parse_reasoning_effort returns None for invalid input; only
+                        # override when we got a recognized value.
+                        if override_cfg is not None:
+                            _saved_reasoning_config = getattr(session.agent, "reasoning_config", None)
+                            session.agent.reasoning_config = override_cfg
+                            _did_override_reasoning = True
+                    except Exception:
+                        # Non-fatal: fall through to default reasoning_config
+                        pass
+                try:
+                    result = session.agent.run_conversation(
+                        message,
+                        **kwargs,
+                    )
+                finally:
+                    if _did_override_reasoning:
+                        session.agent.reasoning_config = _saved_reasoning_config
                 result = _jsonable(result if isinstance(result, dict) else {"value": result})
+                result_for_tail_sync = result
                 self._sync_result_tail_to_session_db(
                     session,
                     result,
@@ -1810,6 +1850,7 @@ class AgentPool:
                     profile,
                     db_count_after_prepersist,
                 )
+                tail_synced = True
                 final_response = str(
                     result.get("final_response")
                     or result.get("response")
@@ -1861,6 +1902,19 @@ class AgentPool:
                     session.current_run_id = None
                     session.last_used_at = time.time()
             except Exception as exc:
+                if not tail_synced:
+                    try:
+                        fallback_result = result_for_tail_sync or self._result_from_agent_messages_for_sync(session)
+                        if fallback_result is not None:
+                            self._sync_result_tail_to_session_db(
+                                session,
+                                fallback_result,
+                                conversation_history,
+                                profile,
+                                db_count_after_prepersist,
+                            )
+                    except Exception:
+                        pass
                 with session.lock:
                     record.status = "error"
                     record.error = str(exc)
@@ -2420,6 +2474,8 @@ class BridgeServer:
             model = req.get("model")
             provider = req.get("provider")
             source = req.get("source")
+            # Local patch (reasoning-effort): per-session reasoning effort override (Web UI brain button).
+            reasoning_effort = req.get("reasoning_effort")
             record = self.pool.start_chat(
                 session_id,
                 message,
@@ -2431,6 +2487,7 @@ class BridgeServer:
                 model,
                 provider,
                 source,
+                reasoning_effort,
             )
             if req.get("wait"):
                 timeout = float(req.get("timeout", 0) or 0)
