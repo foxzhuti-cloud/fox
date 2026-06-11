@@ -372,10 +372,6 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     HERMES_AGENT_BRIDGE_WORKER_PORT_BASE: String(workerPortBase),
     // And for preview-mode bridges spawned by the in-app update controller.
     HERMES_WEB_UI_PREVIEW_AGENT_BRIDGE_TRANSPORT: 'tcp',
-    // Suppress the npm-registry update prompt (upstream #1105). hermes-web-ui
-    // is bundled here; users can't `npm i -g` to upgrade, they have to wait
-    // for the wrapper app to ship a new release.
-    HERMES_WEB_UI_DISABLE_UPDATE_CHECK: 'true',
     // Single-user desktop install: open the gateway's user allowlist by
     // default. Otherwise the gateway silently drops every inbound platform
     // message (DingTalk/Slack/Telegram) with a startup warning. Users can

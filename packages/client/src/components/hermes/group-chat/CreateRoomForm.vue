@@ -2,7 +2,6 @@
 import { ref, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NInput, NButton, NSpace, NInputNumber, NCollapse, NCollapseItem } from 'naive-ui'
-import { getStoredUsername } from '@/api/client'
 
 type InputLikeInstance = {
     focus: () => void
