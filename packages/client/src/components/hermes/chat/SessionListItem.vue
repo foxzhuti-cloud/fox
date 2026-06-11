@@ -129,3 +129,13 @@ onUnmounted(() => {
     </NPopconfirm>
   </button>
 </template>
+
+<style scoped>
+.session-item-agent-logo {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+</style>
