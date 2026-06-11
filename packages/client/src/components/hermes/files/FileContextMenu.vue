@@ -19,6 +19,7 @@ const targetEntry = ref<FileEntry | null>(null)
 
 const emit = defineEmits<{
   (e: 'rename', entry: FileEntry): void
+  (e: 'newFolder', entry: FileEntry): void
 }>()
 
 function show(e: MouseEvent, entry: FileEntry) {
@@ -49,6 +50,7 @@ function getOptions() {
   }
   options.push({ type: 'divider', key: 'd1' })
   options.push({ label: t('files.copyPath'), key: 'copyPath' })
+  options.push({ label: t('files.newFolder'), key: 'newFolder' })
   options.push({ label: t('files.rename'), key: 'rename' })
   options.push({ type: 'divider', key: 'd2' })
   options.push({ label: t('files.delete'), key: 'delete' })
@@ -84,6 +86,9 @@ async function handleSelect(key: string) {
     }
     case 'rename':
       emit('rename', entry)
+      break
+    case 'newFolder':
+      emit('newFolder', entry)
       break
     case 'delete':
       dialog.warning({
